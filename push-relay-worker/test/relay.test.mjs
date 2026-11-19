@@ -1901,10 +1901,14 @@ test("SMS SIM selection survives durable delivery only to its target Android", a
   const commands = (await a.json()).commands;
   assert.equal(commands.length, 1);
   assert.equal(commands[0].sim_account, "opaque:SIM-2");
-  for (const bad of [3, "bad\nslot", "x".repeat(513)]) {
+  for (const bad of [3, "bad\tslot", "bad\u0000slot", "x".repeat(513)]) {
     assert.equal((await worker.fetch(post("/v2/commands/enqueue", {
       ...payload, command_id: crypto.randomUUID(), sim_account: bad}), env)).status, 400);
   }
+  // Android PhoneAccountHandle keys are newline-joined and must be accepted.
+  assert.equal((await worker.fetch(post("/v2/commands/enqueue", {
+    ...payload, command_id: crypto.randomUUID(),
+    sim_account: "com.android.phone/.TelephonyConnectionService\n1\nUserHandle{0}"}), env)).status, 202);
 });
 
 test("relay preserves optional early media negotiation and scoped status without changing call state", () => {
@@ -1977,10 +1981,13 @@ test("cloud SIM roster is authenticated, Agent scoped, bounded and clears on rem
   assert.deepEqual((await status()).find(a=>a.agent_id==="android-B").sim_slots,[]);
   assert.equal((await send({...heartbeat,device_secret:"wrong",sim_slots:[]})).status,401);
   assert.deepEqual((await status()).find(a=>a.agent_id==="android-A").sim_slots,slots);
-  await send({...heartbeat,sim_slots:[...slots,slots[0],{id:"bad\n",label:"bad"},{id:"x",label:7}]});
+  await send({...heartbeat,sim_slots:[...slots,slots[0],{id:"bad\t",label:"bad"},{id:"x",label:7}]});
   assert.deepEqual((await status()).find(a=>a.agent_id==="android-A").sim_slots,slots);
   await send({...heartbeat,sim_slots:[{id:"x".repeat(513),label:"SIM"}, {id:"x",label:"bad\n"}]});
   assert.deepEqual((await status()).find(a=>a.agent_id==="android-A").sim_slots,[]);
+  const newlineSlot=[{id:"com.android.phone/.TelephonyConnectionService\n1\nUserHandle{0}",label:"SIM"}];
+  await send({...heartbeat,sim_slots:newlineSlot});
+  assert.deepEqual((await status()).find(a=>a.agent_id==="android-A").sim_slots,newlineSlot);
   await send({...heartbeat,sim_slots:Array.from({length:12},(_,i)=>({id:`sim-${i}`,label:"SIM"}))});
   assert.equal((await status()).find(a=>a.agent_id==="android-A").sim_slots.length,8);
   await send({...heartbeat,sim_slots:[]});
@@ -1997,7 +2004,7 @@ test("dial and SMS preserve selected SIM and reject changes to an existing inten
     const command={...auth,command_id:"c87f982a-1750-4f03-9a96-6553e454f522",type,
       target_agent_id:"android-A",number:"10086",message:"synthetic",sim_account:"account/2"};
     const enqueue = body => worker.fetch(post("/v2/commands/enqueue",body),env);
-    for (const invalid of [123, null, "bad\n", "x".repeat(513)]) {
+    for (const invalid of [123, null, "bad\t", "x".repeat(513)]) {
       assert.equal((await enqueue({...command,sim_account:invalid})).status,400);
     }
     assert.equal((await enqueue(command)).status,202);
