@@ -189,6 +189,48 @@ struct CloudAgentStatus: Decodable, Equatable, Sendable {
 
 /// One call-capable SIM/PhoneAccount reported by the paired Android.
 /// The identifier is an opaque Telecom handle; the number is display-only.
+/// Shows a receiving line ("SIM 1") as its phone number when the Agent reports one.
+/// Only this small slot → number map is kept, for display; slot handles stay number-free.
+enum SIMLineDisplay {
+    static let key = "airsim.sim-line-numbers.v1"
+
+    static func update(agentID: String, slots: [AndroidSIMSlot], defaults: UserDefaults = .standard) {
+        guard !agentID.isEmpty, !slots.isEmpty else { return }
+        var lines: [String: String] = [:]
+        for slot in slots {
+            guard let index = slot.slotIndex, index >= 0, let number = slot.displayNumber else { continue }
+            lines["SIM \(index + 1)"] = number
+        }
+        var all = defaults.dictionary(forKey: key) as? [String: [String: String]] ?? [:]
+        guard all[agentID] != (lines.isEmpty ? nil : lines) else { return }
+        all[agentID] = lines.isEmpty ? nil : lines
+        defaults.set(all, forKey: key)
+    }
+
+    static func name(agentID: String?, line: String, defaults: UserDefaults = .standard) -> String {
+        guard let agentID,
+              let number = (defaults.dictionary(forKey: key) as? [String: [String: String]])?[agentID]?[line]
+        else { return line }
+        return format(number)
+    }
+
+    static func forget(agentID: String, defaults: UserDefaults = .standard) {
+        var all = defaults.dictionary(forKey: key) as? [String: [String: String]] ?? [:]
+        guard all.removeValue(forKey: agentID) != nil else { return }
+        defaults.set(all, forKey: key)
+    }
+
+    /// Mainland mobile numbers read as 3-4-4 without the +86 prefix; others stay as reported.
+    static func format(_ number: String) -> String {
+        let compact = number.filter { !$0.isWhitespace && $0 != "-" }
+        var digits = Substring(compact)
+        if digits.hasPrefix("+86") { digits = digits.dropFirst(3) } else if digits.hasPrefix("86"), digits.count == 13 { digits = digits.dropFirst(2) }
+        guard digits.count == 11, digits.first == "1", digits.allSatisfy(\.isNumber) else { return compact }
+        let value = String(digits)
+        return "\(value.prefix(3)) \(value.dropFirst(3).prefix(4)) \(value.suffix(4))"
+    }
+}
+
 struct AndroidSIMSlot: Codable, Equatable, Identifiable, Sendable {
     let id: String
     let label: String
@@ -410,7 +452,8 @@ struct SMSMessage: Codable, Equatable, Sendable, Identifiable {
 
     var simDeliveryLabel: String {
         let line = simSlot?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return "\(isOutgoing ? "通过" : "接收于") \(line.isEmpty ? "SIM 未知" : line)"
+        let shown = line.isEmpty ? "SIM 未知" : SIMLineDisplay.name(agentID: sourceAgentID, line: line)
+        return "\(isOutgoing ? "通过" : "接收于") \(shown)"
     }
 
     /// 新版 Agent 用 delivery_id 对齐 APNs 与本地同步；旧版仍回退到内容指纹。
@@ -1473,6 +1516,7 @@ enum SMSSIMPreference {
         return slots
     }
     static func forget(agentID: String, defaults: UserDefaults = .standard) {
+        SIMLineDisplay.forget(agentID: agentID, defaults: defaults)
         defaults.removeObject(forKey: key(agentID))
         defaults.removeObject(forKey: "airsim.sms-sim-slots.\(agentID)")
         defaults.removeObject(forKey: conversationsKey(agentID))

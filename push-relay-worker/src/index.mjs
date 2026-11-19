@@ -1478,6 +1478,26 @@ function maskNumber(value) {
   return text.length > 2 ? `${"*".repeat(text.length - 2)}${text.slice(-2)}` : "*".repeat(text.length);
 }
 function shortID(value) { return stringValue(value).slice(-8); }
+
+// "SIM 1" means little on the iPhone; show the receiving line's number when the Agent's
+// latest heartbeat reports one for that slot. Mainland mobile numbers read as 3-4-4.
+function formatLineNumber(value) {
+  const compact = stringValue(value).replace(/[\s-]/g, "");
+  const mainland = compact.match(/^(?:\+?86)?(1\d{10})$/);
+  return mainland ? `${mainland[1].slice(0, 3)} ${mainland[1].slice(3, 7)} ${mainland[1].slice(7)}` : compact;
+}
+async function simLineLabel(env, deviceID, agentID, simSlot) {
+  const index = Number(/^SIM ([1-9][0-9]?)$/.exec(simSlot)?.[1]) - 1;
+  if (!(index >= 0) || !agentID) return simSlot;
+  try {
+    const records = await readAgentHeartbeats(env, deviceID);
+    const slots = records.find(record => record?.agent_id === agentID)?.sim_slots;
+    const number = Array.isArray(slots) ? slots.find(slot => slot?.slot_index === index && nonEmpty(slot.number))?.number : "";
+    return number ? formatLineNumber(number) : simSlot;
+  } catch {
+    return simSlot;
+  }
+}
 function logSMS(fields) { console.log(JSON.stringify({ event: "sms_trace", ...fields })); }
 
 async function receiveSMS(request, env) {
@@ -1533,9 +1553,11 @@ async function receiveSMS(request, env) {
   }
   await bestEffortWriteRelayState(env, dedupeKey, "1", 7 * 24 * 60 * 60);
 
+  const lineLabel = encryptedPayload || !simSlot ? simSlot
+    : await simLineLabel(env, authenticated.device.device_id, stringValue(message.agent_id), simSlot);
   const payload = encryptedPayload || fittedSMSPayload(message.content, (content, truncated) => ({
     aps: {
-      alert: { title: sender, subtitle: simSlot ? `接收于 ${simSlot}` : "SIM 未知", body: content },
+      alert: { title: sender, subtitle: simSlot ? `接收于 ${lineLabel}` : "SIM 未知", body: content },
       sound: "default",
       "thread-id": `airsim-sms-${sender}`.slice(0, 64),
       "content-available": 1,

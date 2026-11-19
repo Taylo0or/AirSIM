@@ -3271,6 +3271,28 @@ final class AirSIMTests: XCTestCase {
         XCTAssertEqual(pushed.timestamp.timeIntervalSince1970, 1_791_448_212.123456789, accuracy: 0.001)
     }
 
+    func testSIMLineDisplayShowsReportedNumberPerSlot() throws {
+        let suite = "airsim.sim-line-test.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertEqual(SIMLineDisplay.format("+8618912345664"), "189 1234 5664")
+        XCTAssertEqual(SIMLineDisplay.format("8618912345664"), "189 1234 5664")
+        XCTAssertEqual(SIMLineDisplay.format("+1 604-555-0100"), "+16045550100")
+        let slots = [
+            AndroidSIMSlot(id: "a/1", label: "SIM 1", number: "+8618912345664", isDefault: true, slotIndex: 0,
+                           subID: 1, carrierName: nil, isEmbedded: nil, isDefaultVoice: nil, isDefaultSMS: nil),
+            AndroidSIMSlot(id: "a/2", label: "SIM 2", number: nil, isDefault: false, slotIndex: 1,
+                           subID: 2, carrierName: nil, isEmbedded: nil, isDefaultVoice: nil, isDefaultSMS: nil),
+        ]
+        SIMLineDisplay.update(agentID: "android-A", slots: slots, defaults: defaults)
+        XCTAssertEqual(SIMLineDisplay.name(agentID: "android-A", line: "SIM 1", defaults: defaults), "189 1234 5664")
+        XCTAssertEqual(SIMLineDisplay.name(agentID: "android-A", line: "SIM 2", defaults: defaults), "SIM 2")
+        XCTAssertEqual(SIMLineDisplay.name(agentID: "android-B", line: "SIM 1", defaults: defaults), "SIM 1")
+        XCTAssertEqual(SIMLineDisplay.name(agentID: nil, line: "SIM 1", defaults: defaults), "SIM 1")
+        SIMLineDisplay.forget(agentID: "android-A", defaults: defaults)
+        XCTAssertEqual(SIMLineDisplay.name(agentID: "android-A", line: "SIM 1", defaults: defaults), "SIM 1")
+    }
+
     func testCloudSMSSyncItemWithoutAPSParsesLikeAPush() throws {
         // Shape produced by the Android Agent's sms_sync batch (no aps, no device identity).
         let item: [AnyHashable: Any] = [

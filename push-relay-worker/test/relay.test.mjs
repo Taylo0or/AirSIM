@@ -2079,3 +2079,26 @@ test("SMS operator trace logs masked metadata and never the text", async () => {
     assert.equal(all.includes(secret), false, `log leaked ${secret}`);
   }
 });
+
+test("SMS alert names the receiving line by its number when the Agent reports one", async () => {
+  const env = testEnvironment(); env.STATUS = new MemoryStatusNamespace();
+  await worker.fetch(post("/v1/devices/register", registration), env);
+  const auth = {device_id: registration.device_id, device_secret: registration.device_secret};
+  await worker.fetch(post("/v1/events/heartbeat", {...auth, event: "agent_heartbeat", agent_id: "android-A",
+    at_ok: true, cellular_state: "registered", sim_slots: [
+      {id: "account-A/1", label: "SIM 1", slot_index: 0, number: "+8618912345664"},
+      {id: "account-A/2", label: "SIM 2", slot_index: 1}]}), env);
+  const captured = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => { captured.push(JSON.parse(options.body)); return new Response("", {status: 200}); };
+  try {
+    for (const [id, slot] of [["line-1", "SIM 1"], ["line-2", "SIM 2"]]) {
+      assert.equal((await worker.fetch(post("/v1/events/sms", {...auth, event: "incoming_sms", delivery_id: id,
+        agent_id: "android-A", sender: "10086", content: "x", sim_slot: slot,
+        timestamp: new Date().toISOString()}), env)).status, 202);
+    }
+  } finally { globalThis.fetch = originalFetch; }
+  assert.equal(captured[0].aps.alert.subtitle, "接收于 189 1234 5664");
+  assert.equal(captured[0].sim_slot, "SIM 1");
+  assert.equal(captured[1].aps.alert.subtitle, "接收于 SIM 2");
+});

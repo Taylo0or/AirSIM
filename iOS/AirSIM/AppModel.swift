@@ -1387,6 +1387,7 @@ final class AppModel: ObservableObject {
            let slots = (cloudAgentDirectory ?? cloudAgentStatus)?.agents
                 .first(where: { $0.agentID == agentID })?.simSlots {
             SMSSIMPreference.remember(agentID: agentID, slots: slots)
+            SIMLineDisplay.update(agentID: agentID, slots: slots)
             return slots
         }
         let live = simSlotOverrides[agentID]
@@ -1396,7 +1397,15 @@ final class AppModel: ObservableObject {
                 ? vobleHub.selected.central.deviceInformation?.simSlots : nil)
         if let live {
             SMSSIMPreference.remember(agentID: agentID, slots: live)
+            SIMLineDisplay.update(agentID: agentID, slots: live)
             return live
+        }
+        // Away from the local links, the cloud roster still describes the SIMs.
+        if let slots = (cloudAgentDirectory ?? cloudAgentStatus)?.agents
+            .first(where: { $0.agentID == agentID })?.simSlots, !slots.isEmpty {
+            SMSSIMPreference.remember(agentID: agentID, slots: slots)
+            SIMLineDisplay.update(agentID: agentID, slots: slots)
+            return slots
         }
         return SMSSIMPreference.rememberedSlots(agentID: agentID)
     }
@@ -5729,6 +5738,7 @@ extension AppModel {
     /// socket or Relay session. System timeline expiry handles suspended apps.
     private func publishWidgetSnapshot() {
         guard hasStarted else { return }
+        for agent in pairedAndroidAgents { _ = smsSIMSlots(for: agent.id) }
         let now = Date()
         let agents = pairedAndroidAgents.sorted { a, b in
             if a.isCurrent != b.isCurrent { return a.isCurrent }
