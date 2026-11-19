@@ -5466,7 +5466,7 @@ final class MinimalSMSAndHangupTests: XCTestCase {
         var restored = try JSONDecoder().decode(SMSMessage.self, from: JSONEncoder().encode(pending))
         XCTAssertEqual(restored.sendState, .sending)
         XCTAssertEqual(restored.sendToken, "local|x")
-        XCTAssertEqual(restored.outgoingStatusLabel, "发送中…")
+        XCTAssertEqual(restored.outgoingStatusLabel, L10n.t("发送中…"))
         XCTAssertFalse(restored.canResend)
         pending.sendState = .failed
         restored = try JSONDecoder().decode(SMSMessage.self, from: JSONEncoder().encode(pending))
@@ -5475,7 +5475,7 @@ final class MinimalSMSAndHangupTests: XCTestCase {
         let legacy = try JSONDecoder().decode(SMSMessage.self, from: Data(
             #"{"sender":"10086","content":"old","timestamp":0,"direction":"outgoing"}"#.utf8))
         XCTAssertNil(legacy.sendState)
-        XCTAssertEqual(legacy.outgoingStatusLabel, "已发送")
+        XCTAssertEqual(legacy.outgoingStatusLabel, L10n.t("已发送"))
         XCTAssertFalse(legacy.canResend)
     }
 
