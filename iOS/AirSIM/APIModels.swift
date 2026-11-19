@@ -345,6 +345,30 @@ enum SMSDirection: String, Codable, Equatable, Sendable {
     case outgoing
 }
 
+/// Local delivery state of an outgoing SMS. `nil` means sent (and every legacy record).
+enum SMSSendState: String, Codable, Equatable, Sendable {
+    /// Shown immediately after tapping send while the module delivers it.
+    case sending
+    /// The module explicitly reported that the SMS was not sent.
+    case failed
+    /// The result never arrived (timeout or the app was terminated mid-send).
+    case unconfirmed
+}
+
+/// Encodes how an in-flight outgoing SMS can be resynced after a relaunch.
+enum SMSSendToken {
+    static func cloud(commandID: UUID, agentID: String) -> String {
+        "cloud|\(commandID.uuidString.lowercased())|\(agentID)"
+    }
+
+    static func parseCloud(_ token: String?) -> (commandID: UUID, agentID: String)? {
+        guard let parts = token?.split(separator: "|", maxSplits: 2, omittingEmptySubsequences: false),
+              parts.count == 3, parts[0] == "cloud",
+              let commandID = UUID(uuidString: String(parts[1])), !parts[2].isEmpty else { return nil }
+        return (commandID, String(parts[2]))
+    }
+}
+
 struct SMSMessage: Codable, Equatable, Sendable, Identifiable {
     let sender: String
     let content: String
@@ -358,8 +382,25 @@ struct SMSMessage: Codable, Equatable, Sendable, Identifiable {
     var sourceAgentID: String? = nil
     /// Android subscription slot label ("SIM 1"/"SIM 2"); absent on legacy records.
     var simSlot: String? = nil
+    /// Outgoing delivery state; `nil` once sent.
+    var sendState: SMSSendState? = nil
+    /// Opaque handle used to resync an in-flight send ("local|<uuid>" or
+    /// "cloud|<command uuid>|<agent id>"). Cleared when the state is final.
+    var sendToken: String? = nil
 
     var isOutgoing: Bool { direction == .outgoing }
+
+    var canResend: Bool { isOutgoing && (sendState == .failed || sendState == .unconfirmed) }
+
+    /// Status shown under an outgoing bubble.
+    var outgoingStatusLabel: String {
+        switch sendState {
+        case .sending: return L10n.t("发送中…")
+        case .failed: return L10n.t("发送失败")
+        case .unconfirmed: return L10n.t("未确认是否发出")
+        case nil: return L10n.t("已发送")
+        }
+    }
 
     var simDeliveryLabel: String {
         let line = simSlot?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -382,6 +423,8 @@ struct SMSMessage: Codable, Equatable, Sendable, Identifiable {
         case deliveryID = "delivery_id"
         case sourceAgentID = "source_agent_id"
         case simSlot = "sim_slot"
+        case sendState = "send_state"
+        case sendToken = "send_token"
     }
 }
 

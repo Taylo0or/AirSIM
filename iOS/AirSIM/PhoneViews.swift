@@ -1242,7 +1242,11 @@ struct MessagesView: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                     if let latest = previewMessage {
-                        Text(latest.simDeliveryLabel).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                        Text(latest.isOutgoing && latest.sendState != nil
+                             ? "\(latest.simDeliveryLabel) · \(latest.outgoingStatusLabel)" : latest.simDeliveryLabel)
+                            .font(.caption2)
+                            .foregroundStyle(latest.isOutgoing && latest.sendState == .failed ? Color.red : Color.secondary)
+                            .lineLimit(1)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1351,8 +1355,8 @@ struct MessageThreadView: View {
     private func sendReply() {
         let body = trimmedReply
         guard !body.isEmpty else { return }
-        reply = ""
-        Task { _ = await model.sendSMS(to: sender, content: body) }
+        // The bubble appears at once as "发送中…" and settles in the background.
+        if model.enqueueSMS(to: sender, content: body) { reply = "" }
     }
 
     var body: some View {
@@ -1366,7 +1370,8 @@ struct MessageThreadView: View {
                     selection.begin(with: id)
                 },
                 onToggleSelection: { selection.toggle($0) },
-                onBeginTextSelection: { composerFocused = false }
+                onBeginTextSelection: { composerFocused = false },
+                onResend: { model.resendSMS($0) }
             )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1718,11 +1723,8 @@ private struct MessageComposer: View {
 
     private func sendNow() {
         guard canSend else { return }
-        sending = true
-        Task {
-            if await model.sendSMS(to: recipient, content: content) { dismiss() }
-            sending = false
-        }
+        // Recorded immediately as "发送中…"; delivery continues after the sheet closes.
+        if model.enqueueSMS(to: recipient, content: content) { dismiss() }
     }
 }
 

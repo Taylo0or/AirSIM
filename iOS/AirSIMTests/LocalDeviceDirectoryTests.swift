@@ -889,6 +889,10 @@ final class LocalDeviceDirectoryTests: XCTestCase {
         model.bindAndroidAgent("B")
         let sent = await model.sendSMS(to: "123", content: "fixture only")
         XCTAssertTrue(sent)
+        let record = model.messages.filter { $0.isOutgoing && $0.content == "fixture only" }
+        XCTAssertEqual(record.count, 1)
+        XCTAssertNil(record.first?.sendState)
+        XCTAssertNil(record.first?.sendToken)
         XCTAssertEqual(b.commands.filter { $0.path == "/api/sms/send" }.count, 1)
         XCTAssertFalse(a.commands.contains { $0.path == "/api/sms/send" })
         let started = model.remoteCall?.startedAt

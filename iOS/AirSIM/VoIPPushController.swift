@@ -1588,6 +1588,15 @@ final class VoIPPushController: NSObject {
     func sendCloudSMS(to number: String, message: String, target: CloudCommandTarget,
                       simAccount: String? = nil) async throws -> SMSSendResult {
         let commandID = UUID()
+        try await enqueueCloudSMS(to: number, message: message, target: target,
+                                  simAccount: simAccount, commandID: commandID)
+        return try await awaitCloudSMS(commandID: commandID, target: target)
+    }
+
+    /// Queues the SMS on the relay. Once this returns, the module may send it even if
+    /// the caller stops waiting, so later failures are ambiguous rather than final.
+    func enqueueCloudSMS(to number: String, message: String, target: CloudCommandTarget,
+                         simAccount: String? = nil, commandID: UUID) async throws {
         guard let registration = currentRegistration() else { throw CloudCommandError.unavailable }
         let enqueue = try await enqueueCloudCommand(
             target: target, registration: registration,
@@ -1598,11 +1607,57 @@ final class VoIPPushController: NSObject {
             simAccount: simAccount
         )
         guard enqueue.accepted else { throw CloudCommandError.invalidResponse }
-        let outcome = try await waitForCloudCommand(commandID: commandID, target: target, registration: registration, timeout: 5 * 60)
+    }
+
+    func awaitCloudSMS(commandID: UUID, target: CloudCommandTarget,
+                       timeout: TimeInterval = 5 * 60) async throws -> SMSSendResult {
+        guard let registration = currentRegistration() else { throw CloudCommandError.unavailable }
+        let outcome = try await waitForCloudCommand(commandID: commandID, target: target, registration: registration, timeout: timeout)
         guard outcome.status == "completed", outcome.result?.sent == true else {
             throw CloudCommandError.failed(outcome.error ?? "模块发送短信失败")
         }
         return SMSSendResult(sent: true, segments: outcome.result?.segments)
+    }
+
+    enum CloudSMSOutcome: Equatable {
+        case sent
+        case failed
+        /// Queued or delivered to the module, result not reported yet.
+        case pending
+        /// The relay expired or dropped the command without a module result.
+        case lost
+        /// The relay could not be asked; try again later.
+        case unreachable
+    }
+
+    /// One-shot status lookup of a previously queued cloud SMS (no polling).
+    func cloudSMSOutcome(commandID: UUID, agentID: String) async -> CloudSMSOutcome {
+        guard CloudAgentRouting.validID(agentID), let registration = currentRegistration(),
+              let url = RelayEndpoint.url(base: registration.relayURL, path: "v2/commands/result") else {
+            return .unreachable
+        }
+        do {
+            let response = try await relayRequest(
+                url: url,
+                body: [
+                    "device_id": registration.deviceID,
+                    "device_secret": registration.deviceSecret,
+                    "command_id": commandID.uuidString.lowercased(),
+                    "target_agent_id": agentID,
+                ],
+                as: CloudCommandResultResponse.self
+            )
+            switch response.status {
+            case "completed": return response.result?.sent == true ? .sent : .failed
+            case "failed": return .failed
+            case "pending", "delivered": return .pending
+            default: return .lost
+            }
+        } catch CloudCommandError.failed(let message) where message == "command not found" {
+            return .lost
+        } catch {
+            return .unreachable
+        }
     }
 
     func sendCloudDTMF(_ digit: String, call: IncomingVoIPCall) async throws {

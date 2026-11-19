@@ -5459,6 +5459,51 @@ final class MinimalSMSAndHangupTests: XCTestCase {
         XCTAssertEqual(SMSSIMPreference.selectedID(agentID: "A", slots: slots, recipient: "2025550100", defaults: defaults), "two")
     }
 
+    func testOutgoingSMSSendStateSurvivesPersistenceAndLegacyRecordsDecodeAsSent() throws {
+        var pending = SMSMessage(sender: "10086", content: "synthetic", code: nil, timestamp: Date(),
+                                 deliveryID: nil, direction: .outgoing, sourceAgentID: "android-A",
+                                 simSlot: "SIM 1", sendState: .sending, sendToken: "local|x")
+        var restored = try JSONDecoder().decode(SMSMessage.self, from: JSONEncoder().encode(pending))
+        XCTAssertEqual(restored.sendState, .sending)
+        XCTAssertEqual(restored.sendToken, "local|x")
+        XCTAssertEqual(restored.outgoingStatusLabel, "发送中…")
+        XCTAssertFalse(restored.canResend)
+        pending.sendState = .failed
+        restored = try JSONDecoder().decode(SMSMessage.self, from: JSONEncoder().encode(pending))
+        XCTAssertTrue(restored.canResend)
+        // Records written before this field existed are sent messages.
+        let legacy = try JSONDecoder().decode(SMSMessage.self, from: Data(
+            #"{"sender":"10086","content":"old","timestamp":0,"direction":"outgoing"}"#.utf8))
+        XCTAssertNil(legacy.sendState)
+        XCTAssertEqual(legacy.outgoingStatusLabel, "已发送")
+        XCTAssertFalse(legacy.canResend)
+    }
+
+    func testSettledOutgoingSMSReplacesPendingCopyWithoutDuplicate() {
+        let at = Date(timeIntervalSince1970: 1_800_000_000.25)
+        let pending = SMSMessage(sender: "10086", content: "synthetic", code: nil, timestamp: at,
+                                 deliveryID: nil, direction: .outgoing, sourceAgentID: "android-A",
+                                 sendState: .sending, sendToken: "local|x")
+        var sent = pending
+        sent.sendState = nil
+        sent.sendToken = nil
+        let merged = SMSHistoryPolicy.deduplicated([pending, sent])
+        XCTAssertEqual(merged.count, 1)
+        XCTAssertNil(merged.first?.sendState)
+        XCTAssertEqual(merged.first?.id, pending.id)
+    }
+
+    func testCloudSendTokenRoundTripsCommandAndAgent() throws {
+        let command = UUID()
+        let token = SMSSendToken.cloud(commandID: command, agentID: "android|A")
+        let parsed = try XCTUnwrap(SMSSendToken.parseCloud(token))
+        XCTAssertEqual(parsed.commandID, command)
+        XCTAssertEqual(parsed.agentID, "android|A")
+        XCTAssertNil(SMSSendToken.parseCloud("local|\(command.uuidString)"))
+        XCTAssertNil(SMSSendToken.parseCloud("cloud|not-a-uuid|A"))
+        XCTAssertNil(SMSSendToken.parseCloud(nil))
+    }
+
     func testSentSMSRetainsSelectedLineAndDeviceAfterPersistence() throws {
         let sent = try XCTUnwrap(SMSHistoryPolicy.appendingSentMessage(
             recipient: "10086", content: "synthetic", at: Date(), to: [], limit: 20,

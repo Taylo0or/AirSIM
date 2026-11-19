@@ -2230,6 +2230,7 @@ final class AppModel: ObservableObject {
         backgroundStandby.setEnabled(storedValue ?? false)
         // 先加载手机副本，再启动轮询，避免模块暂时离线时界面显示为空。
         restoreLocalHistory()
+        resyncPendingOutgoingSMS()
         Task { await contacts.loadIfAuthorized() }
         if IncomingCallPresentationRequest.isPending() { presentCurrentCallInApp() }
         presentManagedCallAfterForegroundTransition()
@@ -2288,6 +2289,7 @@ final class AppModel: ObservableObject {
         // App 可能在首次解锁前被 PushKit/后台任务唤醒，此时受保护文件会暂时读成空。
         // 回到前台重新做并集合并，不能让早期空读取覆盖手机里的持久化记录。
         restoreLocalHistory()
+        resyncPendingOutgoingSMS()
         Task { await contacts.loadIfAuthorized() }
         if IncomingCallPresentationRequest.isPending() { presentCurrentCallInApp() }
         presentManagedCallAfterForegroundTransition()
@@ -3517,13 +3519,100 @@ final class AppModel: ObservableObject {
 #endif
     }
 
+    /// Tokens of outgoing SMS whose delivery is running in this process.
+    private var inFlightSMSTokens = Set<String>()
+    private var pendingSMSResyncRunning = false
+
+    /// A send that is already visible in the history as `.sending`.
+    private struct PendingSMS {
+        var record: SMSMessage
+        let target: String
+        let body: String
+        let boundAtStart: String?
+        let smsAgentID: String?
+        let smsSlot: String?
+        let commandID: UUID
+    }
+
+    /// Shows the SMS in the conversation at once ("发送中…") and delivers it in the
+    /// background; the bubble is updated to sent / failed / unconfirmed afterwards.
+    /// Returns false only when the input is rejected and nothing was recorded.
+    @discardableResult
+    func enqueueSMS(to phone: String, content: String) -> Bool {
+        guard let pending = beginPendingSMS(to: phone, content: content) else { return false }
+        Task { _ = await deliverPendingSMS(pending) }
+        return true
+    }
+
     func sendSMS(to phone: String, content: String) async -> Bool {
+        guard let pending = beginPendingSMS(to: phone, content: content) else { return false }
+        return await deliverPendingSMS(pending)
+    }
+
+    /// Re-sends a failed or unconfirmed outgoing SMS as a new message.
+    func resendSMS(_ message: SMSMessage) {
+        guard message.isOutgoing, message.sendState == .failed || message.sendState == .unconfirmed else { return }
+        historyStore.deleteMessages(ids: [message.id], from: messages)
+        if let latest = historyStore.messageSnapshot() { messages = normalizedMessages(latest) }
+        enqueueSMS(to: message.sender, content: message.content)
+    }
+
+    private func beginPendingSMS(to phone: String, content: String) -> PendingSMS? {
         let boundAtStart = boundAgentID
         let target = Self.validatedNumber(phone)
         let body = content.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !target.isEmpty, !body.isEmpty, body.count <= 2_000 else { return false }
+        guard !target.isEmpty, !body.isEmpty, body.count <= 2_000 else { return nil }
+        let smsAgentID = boundAtStart ?? currentAndroidAgent?.id
+        let smsSlot = smsAgentID.flatMap { selectedSMSSlotID(for: $0, recipient: target) }
+        let slotLabel = smsAgentID.flatMap { id in smsSIMSlots(for: id).first { $0.id == smsSlot }.map { slot in
+            slot.slotIndex.map { "SIM \($0 + 1)" } ?? slot.label
+        } }
+        let commandID = UUID()
+        // History is persisted with whole-second ISO 8601 dates; use the same precision so
+        // the pending copy and its settled replacement share one identity.
+        let sentAt = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down))
+        let record = SMSMessage(
+            sender: target, content: body, code: nil, timestamp: sentAt, deliveryID: nil,
+            direction: .outgoing, sourceAgentID: smsAgentID, simSlot: slotLabel,
+            sendState: .sending, sendToken: "local|\(commandID.uuidString.lowercased())"
+        )
+        let pending = PendingSMS(record: record, target: target, body: body, boundAtStart: boundAtStart,
+                                 smsAgentID: smsAgentID, smsSlot: smsSlot, commandID: commandID)
+        inFlightSMSTokens.insert(record.sendToken!)
+        storeOutgoingSMS(record)
+        return pending
+    }
+
+    private func storeOutgoingSMS(_ record: SMSMessage) {
+        if !historyStore.saveMessages([record]) {
+            errorMessage = record.sendState == nil
+                ? "短信已发送，但保存到本机失败，请稍后刷新确认" : "短信状态保存到本机失败"
+        } else if let latest = historyStore.messageSnapshot() {
+            messages = normalizedMessages(latest)
+        }
+    }
+
+    private func deliverPendingSMS(_ initial: PendingSMS) async -> Bool {
+        var pending = initial
+        let token = initial.record.sendToken ?? ""
+        // Keep delivering for the short grace period iOS grants after leaving the app.
+        var backgroundTask = UIBackgroundTaskIdentifier.invalid
+        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "airsim.sms.send") {
+            UIApplication.shared.endBackgroundTask(backgroundTask)
+            backgroundTask = .invalid
+        }
+        defer {
+            inFlightSMSTokens.remove(token)
+            if backgroundTask != .invalid { UIApplication.shared.endBackgroundTask(backgroundTask) }
+        }
+        let boundAtStart = pending.boundAtStart
+        let target = pending.target
+        let body = pending.body
+        let smsAgentID = pending.smsAgentID
+        let smsSlot = pending.smsSlot
         var smsRoute = "none"
         var smsSlotLabel = "-"
+        var enqueuedToCloud = false
         do {
             // The outgoing SMS selection is independent of the current call's
             // immutable PCM route and of the legacy default browser's status.
@@ -3536,8 +3625,6 @@ final class AppModel: ObservableObject {
             // A signed VoWLAN health check is the reachability authority. The global
             // polling flags can briefly lag during route switches and must not disable SMS.
             let localReachable = localAPI != nil
-            let smsAgentID = boundAtStart ?? currentAndroidAgent?.id
-            let smsSlot = smsAgentID.flatMap { selectedSMSSlotID(for: $0, recipient: target) }
             let voBLEReady = voble.state == .ready
                 && (boundAtStart == nil || voble.authenticatedIdentity == boundAtStart)
             if localReachable {
@@ -3586,7 +3673,18 @@ final class AppModel: ObservableObject {
                 if smsSlot != nil, route.agentID != smsAgentID {
                     throw CloudCommandError.failed("短信发送设备已变化，请重新选择发送卡")
                 }
-                result = try await VoIPPushController.shared.sendCloudSMS(to: target, message: body, target: route, simAccount: smsSlot)
+                // Persist the relay command identity first, so a relaunch can resync the result.
+                let cloudToken = SMSSendToken.cloud(commandID: pending.commandID, agentID: route.agentID)
+                pending.record.sendToken = cloudToken
+                inFlightSMSTokens.insert(cloudToken)
+                defer { inFlightSMSTokens.remove(cloudToken) }
+                storeOutgoingSMS(pending.record)
+                try await VoIPPushController.shared.enqueueCloudSMS(
+                    to: target, message: body, target: route, simAccount: smsSlot,
+                    commandID: pending.commandID)
+                enqueuedToCloud = true
+                result = try await VoIPPushController.shared.awaitCloudSMS(
+                    commandID: pending.commandID, target: route)
             } else {
                 throw CloudCommandError.cloudModeDisabled
             }
@@ -3605,14 +3703,12 @@ final class AppModel: ObservableObject {
                     isFailure: !sent
                 )
             }
-            if result.sent {
-                if let smsAgentID, let smsSlot {
-                    SMSSIMPreference.select(smsSlot, agentID: smsAgentID, recipient: target)
-                }
-                let slotLabel = smsAgentID.flatMap { id in smsSIMSlots(for: id).first { $0.id == smsSlot }.map { slot in
-                    slot.slotIndex.map { "SIM \($0 + 1)" } ?? slot.label
-                } }
-                saveSentMessage(recipient: target, content: body, agentID: smsAgentID, simSlot: slotLabel)
+            var final = pending.record
+            final.sendToken = nil
+            final.sendState = result.sent ? nil : .failed
+            storeOutgoingSMS(final)
+            if result.sent, let smsAgentID, let smsSlot {
+                SMSSIMPreference.select(smsSlot, agentID: smsAgentID, recipient: target)
             }
             if localReachable { await refreshMessages(silently: true) }
             return result.sent
@@ -3631,8 +3727,70 @@ final class AppModel: ObservableObject {
                     isFailure: true
                 )
             }
+            var final = pending.record
+            if enqueuedToCloud, Self.isAmbiguousCloudSMSFailure(error) {
+                // The module may still send it; keep the token so a later resync can settle it.
+                final.sendState = .unconfirmed
+            } else {
+                final.sendState = .failed
+                final.sendToken = nil
+            }
+            storeOutgoingSMS(final)
             errorMessage = error.localizedDescription
             return false
+        }
+    }
+
+    /// After the relay accepted the command, only an explicit module failure is final.
+    private static func isAmbiguousCloudSMSFailure(_ error: Error) -> Bool {
+        if case CloudCommandError.failed = error { return false }
+        return true
+    }
+
+    /// Settles outgoing SMS left in `.sending`/`.unconfirmed` by an interrupted send,
+    /// e.g. the app was suspended or terminated while waiting for the module.
+    func resyncPendingOutgoingSMS() {
+        guard !pendingSMSResyncRunning else { return }
+        let candidates = messages.filter { message in
+            guard message.isOutgoing, message.sendState == .sending || message.sendState == .unconfirmed,
+                  let token = message.sendToken else { return false }
+            return !inFlightSMSTokens.contains(token)
+        }
+        guard !candidates.isEmpty else { return }
+        pendingSMSResyncRunning = true
+        Task {
+            defer { pendingSMSResyncRunning = false }
+            for record in candidates {
+                var updated = record
+                if let cloud = SMSSendToken.parseCloud(record.sendToken) {
+                    let stale = record.timestamp < Date().addingTimeInterval(-24 * 3600)
+                    switch await VoIPPushController.shared.cloudSMSOutcome(
+                        commandID: cloud.commandID, agentID: cloud.agentID) {
+                    case .sent:
+                        updated.sendState = nil; updated.sendToken = nil
+                    case .failed:
+                        updated.sendState = .failed; updated.sendToken = nil
+                    case .pending:
+                        // Still queued for the module (relay expires SMS commands after 5 minutes).
+                        if stale { updated.sendState = .unconfirmed; updated.sendToken = nil }
+                    case .lost:
+                        updated.sendState = .unconfirmed; updated.sendToken = nil
+                    case .unreachable:
+                        // Ask again on the next foreground; stop after a day.
+                        updated.sendState = .unconfirmed
+                        if stale { updated.sendToken = nil }
+                    }
+                } else {
+                    // A local (VoWLAN/VoBLE) send interrupted by app termination has no remote record.
+                    updated.sendState = .unconfirmed
+                    updated.sendToken = nil
+                }
+                guard updated != record else { continue }
+                // The live send may have settled the record meanwhile; never overwrite a final state.
+                guard let current = messages.first(where: { $0.id == record.id }),
+                      current.sendState == record.sendState, current.sendToken == record.sendToken else { continue }
+                storeOutgoingSMS(updated)
+            }
         }
     }
 

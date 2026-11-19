@@ -8,6 +8,8 @@ struct SMSConversationTimelineView: UIViewControllerRepresentable {
     let onBeginSelection: (String) -> Void
     let onToggleSelection: (String) -> Void
     let onBeginTextSelection: () -> Void
+    /// Re-sends a failed or unconfirmed outgoing SMS.
+    var onResend: ((SMSMessage) -> Void)? = nil
 
     func makeUIViewController(context: Context) -> SMSConversationTimelineController {
         SMSConversationTimelineController(presentation: self)
@@ -283,6 +285,8 @@ final class SMSConversationTimelineController: UIViewController, UICollectionVie
         cell.onSelectText = { [weak self] in self?.beginTextSelection(item.id) }
         cell.onMore = { [weak self] in self?.beginMessageSelection(item.id) }
         cell.onToggle = { [weak self] in self?.presentation.onToggleSelection(item.id) }
+        cell.onResend = item.message.canResend
+            ? { [weak self] in self?.presentation.onResend?(item.message) } : nil
         return cell
     }
 
@@ -307,13 +311,19 @@ final class SMSConversationTimelineController: UIViewController, UICollectionVie
               cell.bubble.bubblePath().contains(collectionView.convert(point, to: cell.bubble)) else { return nil }
         endTextSelection()
         let id = items[indexPath.item].id
+        let message = items[indexPath.item].message
         return UIContextMenuConfiguration(identifier: id as NSString, previewProvider: nil) { [weak self] _ in
             guard let self else { return nil }
-            return UIMenu(children: [
+            var actions: [UIMenuElement] = []
+            if message.canResend, let resend = self.presentation.onResend {
+                actions.append(UIAction(title: L10n.t("重新发送"), image: UIImage(systemName: "arrow.clockwise")) { _ in resend(message) })
+            }
+            actions += [
                 UIAction(title: L10n.t("复制"), image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in self?.copyMessage(id) },
                 UIAction(title: L10n.t("选择文本"), image: UIImage(systemName: "text.cursor")) { [weak self] _ in self?.pendingMenuAction = .text(id) },
                 UIAction(title: L10n.t("更多…"), image: UIImage(systemName: "ellipsis.circle")) { [weak self] _ in self?.pendingMenuAction = .more(id) }
-            ])
+            ]
+            return UIMenu(children: actions)
         }
     }
 
@@ -450,6 +460,7 @@ private final class SMSConversationCell: UICollectionViewCell, UIEditMenuInterac
     var onCopy: (() -> Void)?
     var onSelectText: (() -> Void)?
     var onMore: (() -> Void)?
+    var onResend: (() -> Void)?
     var onToggle: (() -> Void)?
 
     override init(frame: CGRect) {
@@ -496,6 +507,7 @@ private final class SMSConversationCell: UICollectionViewCell, UIEditMenuInterac
         onCopy = nil
         onSelectText = nil
         onMore = nil
+        onResend = nil
         onToggle = nil
     }
 
@@ -510,7 +522,7 @@ private final class SMSConversationCell: UICollectionViewCell, UIEditMenuInterac
         body.textAlignment = .natural
         body.accessibilityLanguage = locale.identifier
         let outgoing = item.message.isOutgoing
-        body.accessibilityHint = outgoing ? L10n.t("已发送") : nil
+        body.accessibilityHint = outgoing ? item.message.outgoingStatusLabel : nil
         body.textColor = outgoing ? .white : .label
         highlightedCode = nil
         if let highlighted = SMSCodeHighlight.renderedBody(in: item.message.content, outgoing: outgoing) {
@@ -525,8 +537,12 @@ private final class SMSConversationCell: UICollectionViewCell, UIEditMenuInterac
         dateLabel.isHidden = !item.showsTimestamp
         var details: [String] = []
         details.append(item.message.simDeliveryLabel)
-        if outgoing && item.showsTail { details.append(L10n.t("已发送")) }
+        // In-flight or failed sends show their state on every bubble, not only the tail.
+        let pendingState = outgoing && item.message.sendState != nil
+        if outgoing && (item.showsTail || pendingState) { details.append(item.message.outgoingStatusLabel) }
         detailLabel.text = details.joined(separator: " · ")
+        detailLabel.textColor = outgoing && item.message.sendState == .failed ? .systemRed
+            : outgoing && item.message.sendState == .unconfirmed ? .systemOrange : .secondaryLabel
         detailLabel.isHidden = details.isEmpty
         detailLabel.textAlignment = outgoing ? .right : .left
         updateSelection(isSelecting: isSelecting, selected: selected)
@@ -574,6 +590,9 @@ private final class SMSConversationCell: UICollectionViewCell, UIEditMenuInterac
         return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
             guard let self else { return nil }
             var actions: [UIMenuElement] = []
+            if let resend = self.onResend {
+                actions.append(UIAction(title: L10n.t("重新发送"), image: UIImage(systemName: "arrow.clockwise")) { _ in resend() })
+            }
             if let code = self.highlightedCode {
                 actions.append(UIAction(title: L10n.t("复制验证码"), image: UIImage(systemName: "number")) { _ in
                     UIPasteboard.general.string = code
