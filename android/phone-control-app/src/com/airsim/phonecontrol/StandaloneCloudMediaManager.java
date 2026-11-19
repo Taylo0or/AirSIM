@@ -394,6 +394,26 @@ final class StandaloneCloudMediaManager implements Closeable {
                     BridgeLog.info("cloud_audio_buffer target_ms=" + audioBufferPolicy.minimum * 20
                             + " max_ms=" + audioBufferPolicy.maximum * 20);
                 }
+                if ("answer".equals(action) && "outgoing".equals(descriptor.direction)) {
+                    // An outgoing carrier call cannot be answered: for the iPhone this
+                    // frame means "attach media". Routing it to Telecom answer() fails
+                    // while the call is dialing/alerting, so the iPhone never got an
+                    // ack, gave up after ~15 s ("模块未确认接听") and heard nothing even
+                    // after the callee picked up. Start the pump instead: it carries
+                    // receive-only early media while dialing and duplex once ACTIVE.
+                    bindOutgoing(descriptor);
+                    if (!descriptor.androidID.isEmpty() && CallRepository.state(descriptor.androidID)
+                            == android.telecom.Call.STATE_DISCONNECTED) {
+                        owner.writeText(status("action_error", "call already ended"));
+                        continue;
+                    }
+                    owner.writeText(status("answer_ok", ""));
+                    if (!mediaStarted) {
+                        mediaStarted = true;
+                        sessions.execute(() -> runPCM(owner));
+                    }
+                    continue;
+                }
                 JSONObject command = new JSONObject().put("command_id",
                                 control.optString("command_id", UUID.randomUUID().toString()))
                         .put("type", "call_control").put("action", action)

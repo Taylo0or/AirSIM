@@ -71,6 +71,8 @@ assert_contains "$S" 'CloudSMSUploader.uploadTimestamp(source.optString("timesta
 assert_contains "$S" '"standalone_sms_upload_retry verdict="' \
   'SMS retry logs must tell an unreachable Relay from a refusing one'
 M="$ROOT/../android/phone-control-app/src/com/airsim/phonecontrol/StandaloneCloudMediaManager.java"
+assert_contains "$M" 'if ("answer".equals(action) && "outgoing".equals(descriptor.direction)) {' \
+  'an outgoing cloud answer must attach media instead of calling Telecom answer()'
 assert_contains "$M" 'mediaRetry.outcome(error, CallRepository.state(descriptor.androidID),' \
   'a media session must ask the retry policy about every failed connect'
 assert_contains "$M" 'if (outcome != CloudCallRetryPolicy.MediaOutcome.RECONNECT)' \
