@@ -56,6 +56,30 @@ final class StandaloneSMSStore {
         }
     }
 
+    /**
+     * True when the SMS broadcast or inbox scan already stored the SMS a MIUI Messages
+     * notification shows. The notification text decorates the body (e.g. a bracketed prefix)
+     * and carries the post time, so delivery IDs differ; match by containment and time.
+     */
+    boolean hasBroadcastCopy(String sender, String notificationText, long postedAtMillis) throws Exception {
+        synchronized (LOCK) {
+            JSONArray records = records();
+            for (int i = records.length() - 1; i >= 0; i--) {
+                JSONObject record = records.getJSONObject(i);
+                String content = record.optString("content");
+                if (content.isEmpty() || notificationText == null || !notificationText.contains(content)) continue;
+                // A contact name replaces the number in the notification title; then require
+                // a body long enough that containment is not a coincidence.
+                if (!record.optString("sender").equals(sender) && content.length() < 6) continue;
+                long storedAt;
+                try { storedAt = java.time.Instant.parse(record.optString("timestamp")).toEpochMilli(); }
+                catch (RuntimeException unreadable) { continue; }
+                if (Math.abs(postedAtMillis - storedAt) <= 5L * 60L * 1_000L) return true;
+            }
+            return false;
+        }
+    }
+
     /** Every retained SMS in arrival order, for the cloud sync cursor (CloudSMSSync). */
     JSONArray syncMessages() throws Exception {
         synchronized (LOCK) {

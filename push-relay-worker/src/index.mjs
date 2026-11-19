@@ -324,6 +324,14 @@ async function enqueueDeviceCommand(request, env) {
       call_secret:stored.call_secret,agent_id:stored.agent_id ?? null,media_transport:stored.media_transport,
       media_url:`${stored.relay_url.replace(/^http/,"ws")}/v1/calls/${stored.call_uuid}/connect`};
   }
+  if (value.type === "send_sms") {
+    logSMS({ direction: "outgoing", stage: response.ok ? "queued" : "rejected", command_id: shortID(command.command_id),
+      agent_id: target ?? "", to: maskNumber(command.number), chars: [...command.message].length,
+      ...(result.duplicate ? { duplicate: true } : {}) });
+  } else if (value.type === "sms_sync") {
+    logSMS({ direction: "sync", stage: response.ok ? "requested" : "rejected", command_id: shortID(command.command_id),
+      agent_id: target ?? "", resumed: Boolean(command.since) });
+  }
   if (value.type !== "sms_sync") await recordDashboardEvent(env, {
     type: value.type === "dial" ? "call" : "sms",
     device_id: authenticated.device.device_id,
@@ -713,6 +721,16 @@ export class DeviceCommandSession {
       delete record.error;
     } else {
       record.error = stringValue(value.error).slice(0, 1_024) || "Agent command failed";
+    }
+    if (record.command?.type === "send_sms") {
+      logSMS({ direction: "outgoing", stage: record.status === "completed" && record.result?.sent === true ? "sent" : "failed",
+        command_id: shortID(record.command.command_id), agent_id: stringValue(record.command.target_agent_id),
+        ...(record.error ? { error: record.error.slice(0, 120) } : {}) });
+    } else if (record.command?.type === "sms_sync") {
+      const messages = Array.isArray(record.result?.messages) ? record.result.messages.length : 0;
+      logSMS({ direction: "sync", stage: record.status === "completed" ? "returned" : "failed",
+        command_id: shortID(record.command.command_id), agent_id: stringValue(record.command.target_agent_id),
+        messages, more: record.result?.more === true, encrypted: record.result?.encrypted === true });
     }
     await this.storage.put(key, record);
     await this.propagateLinkedCompletion(record);
@@ -1452,6 +1470,16 @@ async function receiveCall(request, env) {
   }
 }
 
+// Operator trace for SMS: metadata only, never the text. Numbers are masked so the log
+// follows delivery without becoming an SMS archive (`kubectl logs` on a self-hosted Relay).
+function maskNumber(value) {
+  const text = stringValue(value).trim();
+  if (text.length >= 8) return `${text.slice(0, 3)}${"*".repeat(text.length - 7)}${text.slice(-4)}`;
+  return text.length > 2 ? `${"*".repeat(text.length - 2)}${text.slice(-2)}` : "*".repeat(text.length);
+}
+function shortID(value) { return stringValue(value).slice(-8); }
+function logSMS(fields) { console.log(JSON.stringify({ event: "sms_trace", ...fields })); }
+
 async function receiveSMS(request, env) {
   const message = await readJSON(request);
   const authenticated = await authenticate(message, env);
@@ -1494,7 +1522,13 @@ async function receiveSMS(request, env) {
   }
 
   const dedupeKey = `dedupe:sms:${authenticated.device.device_id}:${stringValue(message.agent_id)}:${message.delivery_id}`;
+  const trace = {
+    direction: "incoming", agent_id: stringValue(message.agent_id), delivery_id: shortID(message.delivery_id),
+    encrypted, ...(encrypted ? {} : { from: maskNumber(sender), chars: [...stringValue(message.content)].length }),
+    ...(simSlot ? { sim_slot: simSlot } : {}),
+  };
   if (await bestEffortReadRelayState(env, dedupeKey)) {
+    logSMS({ ...trace, stage: "duplicate" });
     return jsonResponse(202, { duplicate: true });
   }
   await bestEffortWriteRelayState(env, dedupeKey, "1", 7 * 24 * 60 * 60);
@@ -1529,6 +1563,7 @@ async function receiveSMS(request, env) {
       type: "sms", device_id: authenticated.device.device_id, status: "delivered",
       channel: "alert", environment: authenticated.device.environment,
     });
+    logSMS({ ...trace, stage: "pushed" });
     return jsonResponse(202, { pushed: true });
   } catch (error) {
     await bestEffortDeleteRelayState(env, dedupeKey);
@@ -1536,6 +1571,7 @@ async function receiveSMS(request, env) {
       type: "sms", device_id: authenticated.device.device_id, status: "failed",
       channel: "alert", environment: authenticated.device.environment,
     });
+    logSMS({ ...trace, stage: "apns_failed" });
     console.error("APNs SMS delivery failed", safeError(error));
     return jsonResponse(502, { error: "APNs delivery failed" });
   }

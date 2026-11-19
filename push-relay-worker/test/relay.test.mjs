@@ -2050,3 +2050,32 @@ test("SMS sync needs no number, carries its cursor and returns the Agent's batch
   delete first.since;
   assert.equal((await enqueue(first)).status, 202);
 });
+
+test("SMS operator trace logs masked metadata and never the text", async () => {
+  const env = testEnvironment(); env.COMMANDS = new MemoryCommandNamespace();
+  await worker.fetch(post("/v1/devices/register", registration), env);
+  const originalFetch = globalThis.fetch, originalLog = console.log;
+  const lines = [];
+  globalThis.fetch = async () => new Response("", { status: 200 });
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    const body = {event: "incoming_sms", device_id: registration.device_id, device_secret: registration.device_secret,
+      delivery_id: "sms-trace-0001", agent_id: "android-A", sender: "+8613812345678",
+      content: "机密验证码 7391", sim_slot: "SIM 1", timestamp: new Date().toISOString()};
+    assert.equal((await worker.fetch(post("/v1/events/sms", body), env)).status, 202);
+    assert.equal((await worker.fetch(post("/v1/events/sms", body), env)).status, 202);
+    const auth = {device_id: registration.device_id, device_secret: registration.device_secret};
+    assert.equal((await worker.fetch(post("/v2/commands/enqueue", {...auth,
+      command_id: "6e0c1d6a-8f8e-4b8a-9d3e-1f2a3b4c5d6f", type: "send_sms", target_agent_id: "android-A",
+      number: "13987654321", message: "outgoing secret text"}), env)).status, 202);
+  } finally { globalThis.fetch = originalFetch; console.log = originalLog; }
+  const traces = lines.filter(line => line.includes('"sms_trace"')).map(line => JSON.parse(line));
+  assert.deepEqual(traces.map(t => `${t.direction}:${t.stage}`), ["incoming:pushed", "incoming:duplicate", "outgoing:queued"]);
+  assert.equal(traces[0].from, "+86*******5678");
+  assert.equal(traces[0].chars, 10);
+  assert.equal(traces[2].to, "139****4321");
+  const all = lines.join("\n");
+  for (const secret of ["机密验证码", "7391", "outgoing secret text", "13812345678", "13987654321"]) {
+    assert.equal(all.includes(secret), false, `log leaked ${secret}`);
+  }
+});

@@ -36,6 +36,14 @@ public final class PureLocalSMSStoreTests {
         assert restarted.localMessages().length() == 2 : "cloud discard deleted local SMS";
         assert "SIM 1".equals(restarted.localMessages().getJSONObject(0).optString("sim_slot"));
         assert "SIM 2".equals(restarted.localMessages().getJSONObject(1).optString("sim_slot"));
+        var dedupe = new StandaloneSMSStore(context.reopen());
+        dedupe.add(new JSONObject().put("delivery_id", "broadcast-1").put("sender", "+8613800000000")
+                .put("content", "ok").put("timestamp", "2026-11-19T22:38:10Z"), true);
+        long posted = java.time.Instant.parse("2026-11-19T22:38:12.915Z").toEpochMilli();
+        assert dedupe.hasBroadcastCopy("+8613800000000", "[短信]ok", posted) : "decorated notification copy not matched";
+        assert !dedupe.hasBroadcastCopy("+8613800000000", "[短信]other", posted) : "different body matched";
+        assert !dedupe.hasBroadcastCopy("+8613800000000", "[短信]ok", posted + 10L * 60_000L) : "old SMS matched";
+        assert !dedupe.hasBroadcastCopy("Contact Name", "[短信]ok", posted) : "short body matched another sender";
         System.out.println("PureLocalSMSStoreTests passed");
     }
 }
