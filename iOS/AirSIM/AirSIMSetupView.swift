@@ -1850,7 +1850,7 @@ final class FeedbackUploader {
     static let shared = FeedbackUploader()
     static let descriptionKey = "airsim.feedback-description"
     static let remarkKey = "airsim.feedback-remark"
-    private static let endpoint = URL(string: "https://airsim-push.remotepilot.site/v1/feedback")!
+    private static let endpoint = URL(string: "https://airsim.taylent.com/v1/feedback")!
 
     private init() {}
 
