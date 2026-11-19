@@ -106,13 +106,11 @@ struct AirSIMDeviceWidgetView: View {
         }
     }
 
+    // Small and medium widgets carry no background switch buttons: two 44 pt
+    // intent rows filled most of the surface, so ordinary taps switched the
+    // device/mode instead of opening AirSIM. Switching stays on large sizes.
     private func small(_ d: AirSIMWidgetSnapshot.Device) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            if snapshot.controls != nil {
-                switchControls(vertical: true)
-                Text(d.status(at: date)).font(.caption).lineLimit(1)
-                HStack { battery(d, compact: true); Spacer(minLength: 2); updated(d).font(.caption2).lineLimit(1) }
-            } else {
             HStack { brand(size: 34); Spacer(); battery(d, compact: true) }
             Spacer(minLength: 2)
             Text(d.name).font(.headline).lineLimit(1)
@@ -121,28 +119,18 @@ struct AirSIMDeviceWidgetView: View {
             Text(d.status(at: date)).font(.caption).lineLimit(1)
             if !textSize.isAccessibilitySize { Divider() }
             updated(d).font(.caption2)
-            }
         }
     }
 
     private func medium(_ d: AirSIMWidgetSnapshot.Device) -> some View {
         HStack(spacing: 14) {
             VStack(alignment: .leading, spacing: 7) {
-                if snapshot.controls != nil {
-                    switchControls(vertical: true)
-                    HStack(spacing: 5) {
-                        Text(d.status(at: date)).font(.caption2).foregroundStyle(secondaryText).lineLimit(1)
-                        Spacer(minLength: 0)
-                        battery(d, compact: true).fixedSize()
-                    }
-                } else {
                 HStack(spacing: 9) {
                     if !textSize.isAccessibilitySize { brand(size: 38) }
                     Text(d.name).font(.headline).lineLimit(1)
                 }
                 status(d)
                 HStack { battery(d, compact: true); Spacer(minLength: 2); updated(d).font(.caption2).lineLimit(1) }
-                }
             }.frame(maxWidth: .infinity, alignment: .leading)
             Divider()
             VStack(alignment: .leading, spacing: 8) {
