@@ -263,6 +263,11 @@ final class StandaloneAgentGateway {
             }
         }
         String type = command.optString("type", "");
+        if ("sms_sync".equals(type)) {
+            return rememberCommand(commandKey, new JSONObject().put("command_id", commandID)
+                    .put("status", "completed")
+                    .put("result", CloudSMSSync.batch(context, command.optString("since", ""))));
+        }
         String action = switch (type) {
             case "dial" -> "dial";
             case "send_sms" -> "send_sms";

@@ -3271,6 +3271,21 @@ final class AirSIMTests: XCTestCase {
         XCTAssertEqual(pushed.timestamp.timeIntervalSince1970, 1_791_448_212.123456789, accuracy: 0.001)
     }
 
+    func testCloudSMSSyncItemWithoutAPSParsesLikeAPush() throws {
+        // Shape produced by the Android Agent's sms_sync batch (no aps, no device identity).
+        let item: [AnyHashable: Any] = [
+            "event": "incoming_sms", "delivery_id": "sync-1", "agent_id": "android-A",
+            "sender": "10086", "content": "云端同步正文", "sim_slot": "SIM 1",
+            "timestamp": "2026-11-19T20:00:01Z",
+        ]
+        let pushed = try IncomingRemoteSMS(userInfo: item, keyStore: MemoryE2EKeyStore())
+        XCTAssertEqual(pushed.deliveryID, "sync-1")
+        XCTAssertEqual(pushed.agentID, "android-A")
+        XCTAssertEqual(pushed.message.content, "云端同步正文")
+        XCTAssertEqual(pushed.message.sourceAgentID, "android-A")
+        XCTAssertFalse(pushed.contentTruncated)
+    }
+
     func testIncomingSMSPushAcceptsWholeSecondTimestamp() throws {
         let pushed = try IncomingRemoteSMS(userInfo: [
             "event": "incoming_sms",

@@ -2020,3 +2020,33 @@ test("dial and SMS preserve selected SIM and reject changes to an existing inten
     assert.equal((await enqueue(legacy)).status,202);
   }
 });
+
+test("SMS sync needs no number, carries its cursor and returns the Agent's batch untouched", async () => {
+  const env = testEnvironment(); env.COMMANDS = new MemoryCommandNamespace();
+  await worker.fetch(post("/v1/devices/register", registration), env);
+  const auth = {device_id: registration.device_id, device_secret: registration.device_secret};
+  const command = {...auth, command_id: "5e0c1d6a-8f8e-4b8a-9d3e-1f2a3b4c5d6e", type: "sms_sync",
+    target_agent_id: "android-A", since: "delivery-41"};
+  const enqueue = body => worker.fetch(post("/v2/commands/enqueue", body), env);
+  for (const since of [7, "x".repeat(129), "bad\ncursor"]) {
+    assert.equal((await enqueue({...command, command_id: crypto.randomUUID(), since})).status, 400);
+  }
+  assert.equal((await enqueue(command)).status, 202);
+  assert.equal((await enqueue({...command, since: "delivery-42"})).status, 409);
+  const pulled = await (await worker.fetch(post("/v2/commands/pull", {...auth, agent_id: "android-A"}), env)).json();
+  assert.equal(pulled.commands.length, 1);
+  assert.equal(pulled.commands[0].type, "sms_sync");
+  assert.equal(pulled.commands[0].since, "delivery-41");
+  const batch = {messages: [{event: "incoming_sms", delivery_id: "delivery-42", agent_id: "android-A",
+    timestamp: "2026-11-19T20:00:00Z", e2e: {v: 1, kid: "0a1b2c3d", n: "AAAAAAAAAAAAAAAA", ct: "x".repeat(40)}}],
+    cursor: "delivery-42", more: false};
+  assert.equal((await worker.fetch(post("/v2/commands/complete", {...auth, agent_id: "android-A",
+    command_id: command.command_id, status: "completed", result: batch}), env)).status, 202);
+  const result = await (await worker.fetch(post("/v2/commands/result", {...auth,
+    command_id: command.command_id, target_agent_id: "android-A"}), env)).json();
+  assert.equal(result.status, "completed");
+  assert.deepEqual(result.result, batch);
+  const first = {...command, command_id: crypto.randomUUID()};
+  delete first.since;
+  assert.equal((await enqueue(first)).status, 202);
+});

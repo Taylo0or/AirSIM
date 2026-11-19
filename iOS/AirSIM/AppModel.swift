@@ -2244,7 +2244,7 @@ final class AppModel: ObservableObject {
         // 先加载手机副本，再启动轮询，避免模块暂时离线时界面显示为空。
         restoreLocalHistory()
         resyncPendingOutgoingSMS()
-        Task { await importDeliveredCloudSMS() }
+        Task { await importDeliveredCloudSMS(); syncCloudSMSAutomaticallyIfDue() }
         Task { await contacts.loadIfAuthorized() }
         if IncomingCallPresentationRequest.isPending() { presentCurrentCallInApp() }
         presentManagedCallAfterForegroundTransition()
@@ -2304,7 +2304,7 @@ final class AppModel: ObservableObject {
         // 回到前台重新做并集合并，不能让早期空读取覆盖手机里的持久化记录。
         restoreLocalHistory()
         resyncPendingOutgoingSMS()
-        Task { await importDeliveredCloudSMS() }
+        Task { await importDeliveredCloudSMS(); syncCloudSMSAutomaticallyIfDue() }
         Task { await contacts.loadIfAuthorized() }
         if IncomingCallPresentationRequest.isPending() { presentCurrentCallInApp() }
         presentManagedCallAfterForegroundTransition()
@@ -3868,10 +3868,20 @@ final class AppModel: ObservableObject {
 
     func refreshMessages(silently: Bool = false) async {
         guard verifiedVoWLANAPI() != nil || !CloudSignalingPreference.isEnabled() else {
-            // Away from the phone's Wi-Fi the Agent cannot be polled; cloud SMS arrive as
-            // pushes instead. Import those still in Notification Center rather than failing.
+            // Away from the phone's Wi-Fi the Agent cannot be polled directly. Import the SMS
+            // pushes still in Notification Center, then ask the Agent through the Relay for
+            // anything retained after the last sync (pushes cleared or never delivered).
             await importDeliveredCloudSMS()
-            if !silently { errorMessage = nil }
+            guard CloudModePreference.isEnabled() else {
+                if !silently { errorMessage = nil }
+                return
+            }
+            do {
+                try await syncCloudSMSFromAgent()
+                if !silently { errorMessage = nil }
+            } catch {
+                if !silently { errorMessage = "云端同步短信失败：\(error.localizedDescription)" }
+            }
             return
         }
         do {
@@ -3884,6 +3894,61 @@ final class AppModel: ObservableObject {
         } catch {
             if !silently { errorMessage = error.localizedDescription }
         }
+    }
+
+    private static let cloudSMSSyncCursorsKey = "airsim.cloud-sms-sync-cursors.v1"
+    private var cloudSMSSyncRunning = false
+    private var lastAutomaticCloudSMSSync = Date.distantPast
+
+    /// Pulls SMS the bound Agent still retains after this iPhone's cursor, through the Relay
+    /// command channel. Items arrive in APNs push shape (sealed when the pairing has an E2E
+    /// key) and are deduplicated by delivery ID, so overlap with pushes is harmless.
+    @discardableResult
+    func syncCloudSMSFromAgent(maximumPages: Int = 15) async throws -> Int {
+        guard !cloudSMSSyncRunning else { return 0 }
+        cloudSMSSyncRunning = true
+        defer { cloudSMSSyncRunning = false }
+        let bound = boundAgentID
+        let route: CloudCommandTarget
+        if let cached = cloudDialTarget(bound: bound) {
+            route = cached
+        } else {
+            let status = try await VoIPPushController.shared.fetchCloudAgentStatus()
+            route = try cloudTarget(status: status, bound: bound, requireOnline: false)
+        }
+        var cursors = UserDefaults.standard.dictionary(forKey: Self.cloudSMSSyncCursorsKey) as? [String: String] ?? [:]
+        var since = cursors[route.agentID]
+        var imported = 0
+        for _ in 0..<maximumPages {
+            let page = try await VoIPPushController.shared.syncCloudSMS(since: since, target: route)
+            let pushes = page.messages.compactMap { try? IncomingRemoteSMS(userInfo: $0) }
+                .filter { !$0.contentTruncated }
+            if !pushes.isEmpty {
+                let saved = PairedAndroidDeviceStore.withSMSIdentitySnapshot(
+                    localAgentIDs: localDevices.agentIDs, defaults: pairedDeviceDefaults
+                ) { current in historyStore.ingestMessages(pushes.map(\.message), legacySourceAgentID: current.uniqueAgentID) }
+                // Never advance past SMS that could not be stored.
+                guard let saved else { throw CloudCommandError.failed("短信保存到本机失败") }
+                if saved.changed { messages = normalizedMessages(saved.messages) }
+                imported += saved.newMessages.count
+            }
+            if !page.cursor.isEmpty, page.cursor != since {
+                since = page.cursor
+                cursors[route.agentID] = page.cursor
+                UserDefaults.standard.set(cursors, forKey: Self.cloudSMSSyncCursorsKey)
+            }
+            if !page.more { break }
+        }
+        if imported > 0 { publishWidgetSnapshot() }
+        return imported
+    }
+
+    /// Foreground catch-up: at most once a minute, silently, when only the cloud reaches the Agent.
+    private func syncCloudSMSAutomaticallyIfDue() {
+        guard verifiedVoWLANAPI() == nil, CloudSignalingPreference.isEnabled(), CloudModePreference.isEnabled(),
+              Date().timeIntervalSince(lastAutomaticCloudSMSSync) > 60 else { return }
+        lastAutomaticCloudSMSSync = Date()
+        Task { _ = try? await syncCloudSMSFromAgent() }
     }
 
     /// Imports cloud SMS pushes still listed in Notification Center. Pushes that arrived

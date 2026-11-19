@@ -56,6 +56,16 @@ final class StandaloneSMSStore {
         }
     }
 
+    /** Every retained SMS in arrival order, for the cloud sync cursor (CloudSMSSync). */
+    JSONArray syncMessages() throws Exception {
+        synchronized (LOCK) {
+            JSONArray all = new JSONArray();
+            JSONArray records = records();
+            for (int i = 0; i < records.length(); i++) all.put(publicMessage(records.getJSONObject(i)));
+            return all;
+        }
+    }
+
     JSONArray cloudPending() throws Exception {
         synchronized (LOCK) {
             JSONArray pending = new JSONArray();

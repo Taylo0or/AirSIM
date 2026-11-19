@@ -1619,6 +1619,48 @@ final class VoIPPushController: NSObject {
         return SMSSendResult(sent: true, segments: outcome.result?.segments)
     }
 
+    /// One page of SMS the Agent still retains after `since`, each item shaped like an APNs SMS push.
+    struct CloudSMSSyncPage {
+        let messages: [[AnyHashable: Any]]
+        let cursor: String
+        let more: Bool
+    }
+
+    /// Asks the Agent, through the Relay command channel, for retained SMS after a cursor.
+    func syncCloudSMS(since: String?, target: CloudCommandTarget, timeout: TimeInterval = 25) async throws -> CloudSMSSyncPage {
+        guard let registration = currentRegistration() else { throw CloudCommandError.unavailable }
+        let commandID = UUID()
+        let enqueue = try await enqueueCloudCommand(
+            target: target, registration: registration, commandID: commandID, type: "sms_sync",
+            number: "", message: nil, extra: since.map { ["since": $0] } ?? [:]
+        )
+        guard enqueue.accepted else { throw CloudCommandError.invalidResponse }
+        guard let url = RelayEndpoint.url(base: registration.relayURL, path: "v2/commands/result") else {
+            throw CloudCommandError.unavailable
+        }
+        let body: [String: Any] = [
+            "device_id": registration.deviceID, "device_secret": registration.deviceSecret,
+            "command_id": commandID.uuidString.lowercased(), "target_agent_id": target.agentID,
+        ]
+        let response = try await CloudAgentRouting.poll(timeout: timeout, request: { () -> [String: Any] in
+            let data = try await self.relayRequestData(url: url, body: body)
+            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                throw CloudCommandError.invalidResponse
+            }
+            return object
+        }, isTerminal: { ["completed", "failed", "expired"].contains($0["status"] as? String ?? "") })
+        guard response["status"] as? String == "completed",
+              let result = response["result"] as? [String: Any],
+              let messages = result["messages"] as? [[String: Any]] else {
+            throw CloudCommandError.failed(response["error"] as? String ?? "模块同步短信失败")
+        }
+        return CloudSMSSyncPage(
+            messages: messages.map { Dictionary(uniqueKeysWithValues: $0.map { (AnyHashable($0.key), $0.value) }) },
+            cursor: result["cursor"] as? String ?? "",
+            more: result["more"] as? Bool ?? false
+        )
+    }
+
     enum CloudSMSOutcome: Equatable {
         case sent
         case failed
@@ -1689,7 +1731,8 @@ final class VoIPPushController: NSObject {
         message: String?,
         simAccount: String? = nil,
         mediaTransport: CloudMediaTransport? = nil,
-        call: IncomingVoIPCall? = nil
+        call: IncomingVoIPCall? = nil,
+        extra: [String: String] = [:]
     ) async throws -> CloudCommandEnqueueResponse {
         guard CloudModePreference.isEnabled() else { throw CloudCommandError.cloudModeDisabled }
         try Task.checkCancellation()
@@ -1711,6 +1754,7 @@ final class VoIPPushController: NSObject {
         if let message { body["message"] = message }
         if let simAccount, !simAccount.isEmpty { body["sim_account"] = simAccount }
         if let mediaTransport { body["media_transport"] = mediaTransport.rawValue }
+        for (key, value) in extra { body[key] = value }
         return try await relayRequest(url: url, body: body, as: CloudCommandEnqueueResponse.self)
     }
 
@@ -1737,6 +1781,14 @@ final class VoIPPushController: NSObject {
         body: [String: Any],
         as type: Response.Type
     ) async throws -> Response {
+        let data = try await relayRequestData(url: url, body: body)
+        guard let decoded = try? JSONDecoder().decode(type, from: data) else {
+            throw CloudCommandError.invalidResponse
+        }
+        return decoded
+    }
+
+    private func relayRequestData(url: URL, body: [String: Any]) async throws -> Data {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.timeoutInterval = 10
@@ -1752,10 +1804,7 @@ final class VoIPPushController: NSObject {
             let message = (try? JSONDecoder().decode(RelayErrorResponse.self, from: data).error)
             throw CloudCommandError.failed(message ?? "Relay HTTP \(http.statusCode)")
         }
-        guard let decoded = try? JSONDecoder().decode(type, from: data) else {
-            throw CloudCommandError.invalidResponse
-        }
-        return decoded
+        return data
     }
 
     /// 验证当前 iPhone 到 Relay 的 HTTPS 控制面，不携带设备密钥。
