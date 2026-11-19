@@ -149,6 +149,7 @@ public final class ShizukuBridgeUserService extends Binder {
             if (sentIntents != null && (sentIntents.size() != parts.size()
                     || sentIntents.contains(null))) return "error:prepare:callback_count";
             stage = "send";
+            AppOpsSamplingGuard.disable();
             if (parts.size() == 1) {
                 manager.sendTextMessage(destination, null, parts.get(0),
                         sentIntents == null ? null : sentIntents.get(0), null);

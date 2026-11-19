@@ -43,11 +43,33 @@ public final class SMSCommandExecutor {
     private SMSCommandExecutor() {}
 
     static boolean supportsSystemSMS(Context context) {
+        PackageManager packages = context.getPackageManager();
         // The split messaging feature was introduced in API 33. Older phones
-        // advertise the umbrella telephony feature even when SMS is supported.
-        String feature = Build.VERSION.SDK_INT >= 33
-                ? PackageManager.FEATURE_TELEPHONY_MESSAGING : PackageManager.FEATURE_TELEPHONY;
-        return context.getPackageManager().hasSystemFeature(feature);
+        // advertise only the umbrella telephony feature.
+        if (Build.VERSION.SDK_INT < 33) return packages.hasSystemFeature(PackageManager.FEATURE_TELEPHONY);
+        if (packages.hasSystemFeature(PackageManager.FEATURE_TELEPHONY_MESSAGING)) return true;
+        // Phones that launched before API 33 and were upgraded (e.g. Redmi K40 on
+        // HyperOS / Android 13) may still declare only the umbrella feature.
+        int initialSdk = deviceInitialSdk();
+        return initialSdk > 0 && initialSdk < 33
+                && packages.hasSystemFeature(PackageManager.FEATURE_TELEPHONY);
+    }
+
+    /** Launch API level of the device, or 0 when it cannot be determined. */
+    static int deviceInitialSdk() {
+        // Build.VERSION.DEVICE_INITIAL_SDK_INT exists since API 31 but is not in the public SDK.
+        try {
+            return Build.VERSION.class.getField("DEVICE_INITIAL_SDK_INT").getInt(null);
+        } catch (ReflectiveOperationException | RuntimeException ignored) {
+        }
+        try {
+            Object value = Class.forName("android.os.SystemProperties")
+                    .getMethod("getInt", String.class, int.class)
+                    .invoke(null, "ro.product.first_api_level", 0);
+            return value instanceof Integer ? (Integer) value : 0;
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
+            return 0;
+        }
     }
 
     static AgentCommandDispatcher.Result execute(Context context, AgentCommand command) {

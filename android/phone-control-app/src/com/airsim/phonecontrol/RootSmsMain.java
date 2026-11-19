@@ -21,6 +21,7 @@ public final class RootSmsMain {
         String stage = "prepare";
         try {
             if (android.os.Looper.myLooper() == null) android.os.Looper.prepareMainLooper();
+            AppOpsSamplingGuard.disable();
             String input = args.length > 0 && !args[0].isEmpty()
                     ? readAll(new java.io.FileInputStream(args[0])) : readAll(System.in);
             JSONObject payload = new JSONObject(input);

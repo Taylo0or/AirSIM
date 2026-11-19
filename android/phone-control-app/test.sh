@@ -336,6 +336,7 @@ mkdir -p "$SMS_OUT"
   "$ROOT"/src/com/airsim/phonecontrol/SmsSendConfirmationGate.java \
   "$ROOT"/src/com/airsim/phonecontrol/SMSCommandExecutor.java \
   "$ROOT"/src/com/airsim/phonecontrol/SMSPrivilegedResult.java \
+  "$ROOT"/src/com/airsim/phonecontrol/AppOpsSamplingGuard.java \
   "$ROOT"/test/com/airsim/phonecontrol/FeedbackUploader.java
 "$JAVAC" --release 17 -cp "$SMS_OUT:$OUT:$ANDROID_JAR" -d "$SMS_OUT" \
   "$ROOT"/test/android/content/pm/PackageManager.java \

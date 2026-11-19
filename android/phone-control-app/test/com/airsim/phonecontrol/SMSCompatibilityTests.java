@@ -11,10 +11,17 @@ public final class SMSCompatibilityTests {
             Context context = new Context();
             context.setSystemService(SmsManager.class, SmsManager.getDefault());
             context.getPackageManager().features.add("android.hardware.telephony");
+            Build.VERSION.DEVICE_INITIAL_SDK_INT = Math.max(sdk, 33);
             boolean legacy = sdk < 33;
             if (SMSCommandExecutor.supportsSystemSMS(context) != legacy) {
                 throw new AssertionError("wrong legacy SMS capability on API " + sdk);
             }
+            // Upgraded from an older launch API: the umbrella feature is enough.
+            Build.VERSION.DEVICE_INITIAL_SDK_INT = 30;
+            if (!SMSCommandExecutor.supportsSystemSMS(context)) {
+                throw new AssertionError("upgraded phone lost SMS capability on API " + sdk);
+            }
+            Build.VERSION.DEVICE_INITIAL_SDK_INT = Math.max(sdk, 33);
             context.getPackageManager().features.add("android.hardware.telephony.messaging");
             if (!SMSCommandExecutor.supportsSystemSMS(context)) throw new AssertionError("SMS capability missing");
             if (SMSCommandExecutor.supportsSystemSMS(new Context())) throw new AssertionError("Wi-Fi-only accepted");
@@ -23,6 +30,8 @@ public final class SMSCompatibilityTests {
             manager = SMSCommandExecutor.managerForSubscription(new Context(), 9);
             if (manager.getSubscriptionId() != 9) throw new AssertionError("null-service fallback lost SIM");
         }
+        // Off-device the hidden sampling config is absent: the guard must fail closed, not throw.
+        if (AppOpsSamplingGuard.disable()) throw new AssertionError("sampling guard should be inert off-device");
         for (String result : new String[]{"unavailable", "error:no_context", "error:no_service", "error:prepare:NullPointerException"}) {
             if (!SMSPrivilegedResult.mayFallback(result)) throw new AssertionError("safe prepare failure blocked");
         }
