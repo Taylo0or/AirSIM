@@ -619,6 +619,8 @@ struct AirSIMSettingsView: View {
     @State private var selfTestReport: CloudSelfTestReport?
     @State private var selfTestTask: Task<Void, Never>?
     @State private var deletingDevice: AndroidAgentPresentation?
+    @State private var renamingDevice: AndroidAgentPresentation?
+    @State private var aliasDraft = ""
     @State private var deviceDeletionInProgress = false
     @State private var deviceDeletionError: String?
     @State private var networkPrefixesText = NetworkRoutePreferences.storedText()
@@ -671,6 +673,18 @@ struct AirSIMSettingsView: View {
             if phase == .active { Task { await readNotificationPermission() } }
         }
         .onChange(of: model.errorMessage) { _ in presentManualAppUpdateIfIdle() }
+        .alert("设备备注名",
+            isPresented: Binding(get: { renamingDevice != nil }, set: { if !$0 { renamingDevice = nil } }),
+            presenting: renamingDevice) { device in
+            TextField(device.reportedName, text: $aliasDraft)
+            Button("保存") { model.setDeviceAlias(aliasDraft, for: device.id) }
+            if device.hasAlias {
+                Button("恢复原名", role: .destructive) { model.setDeviceAlias(nil, for: device.id) }
+            }
+            Button("取消", role: .cancel) {}
+        } message: { device in
+            Text("只保存在这台 iPhone 上，用于区分多台安卓设备。原名：\(device.reportedName)")
+        }
         .confirmationDialog("忘记这个设备？",
             isPresented: Binding(get: { deletingDevice != nil }, set: { if !$0 { deletingDevice = nil } }),
             titleVisibility: .visible, presenting: deletingDevice) { device in
@@ -965,7 +979,9 @@ struct AirSIMSettingsView: View {
                 NavigationLink(value: AirSIMSettingsPage.device(device.id)) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(device.deviceName)
-                        Text(device.isCurrent ? "当前设备" : "已保存配对").font(.caption).foregroundStyle(.secondary)
+                        Text((device.hasAlias ? device.reportedName + " · " : "")
+                             + (device.isCurrent ? "当前设备" : "已保存配对"))
+                            .font(.caption).foregroundStyle(.secondary)
                     }.padding(.vertical, 4)
                 }
             }
@@ -978,6 +994,13 @@ struct AirSIMSettingsView: View {
         if let device = model.pairedDeviceHistory.first(where: { $0.id == id }) {
             Section {
                 Text(device.deviceName).font(.title2.bold())
+                if device.hasAlias { LabeledContent("设备型号", value: device.reportedName) }
+                Button {
+                    aliasDraft = device.hasAlias ? device.deviceName : ""
+                    renamingDevice = device
+                } label: {
+                    Label(device.hasAlias ? "修改备注名" : "设置备注名", systemImage: "pencil")
+                }
                 LabeledContent("电量") { AndroidDeviceBatteryLabel(reading: model.androidBattery(for: id)) }
                 LabeledContent("号码", value: device.phoneNumber ?? "运营商未提供号码")
                 LabeledContent("VoWLAN", value: device.vowlanOnline ? "在线" : "未连接")

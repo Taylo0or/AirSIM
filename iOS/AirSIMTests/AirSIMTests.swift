@@ -5459,6 +5459,34 @@ final class MinimalSMSAndHangupTests: XCTestCase {
         XCTAssertEqual(SMSSIMPreference.selectedID(agentID: "A", slots: slots, recipient: "2025550100", defaults: defaults), "two")
     }
 
+    func testDeviceAliasIsLocalTrimmedAndClearable() throws {
+        let suite = "airsim.alias-test.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertNil(AndroidDeviceAliasStore.alias(for: "agent-A", defaults: defaults))
+        AndroidDeviceAliasStore.set("  加拿大 K40\n电信卡 ", for: "agent-A", defaults: defaults)
+        XCTAssertEqual(AndroidDeviceAliasStore.alias(for: "agent-A", defaults: defaults), "加拿大 K40 电信卡")
+        XCTAssertNil(AndroidDeviceAliasStore.alias(for: "agent-B", defaults: defaults))
+        AndroidDeviceAliasStore.set(String(repeating: "长", count: 100), for: "agent-B", defaults: defaults)
+        XCTAssertEqual(AndroidDeviceAliasStore.alias(for: "agent-B", defaults: defaults)?.count,
+                       AndroidDeviceAliasStore.maximumLength)
+        AndroidDeviceAliasStore.set("   ", for: "agent-A", defaults: defaults)
+        XCTAssertNil(AndroidDeviceAliasStore.alias(for: "agent-A", defaults: defaults))
+        AndroidDeviceAliasStore.set(nil, for: "agent-B", defaults: defaults)
+        XCTAssertNil(AndroidDeviceAliasStore.alias(for: "agent-B", defaults: defaults))
+    }
+
+    func testAliasedPresentationKeepsReportedName() {
+        let plain = AndroidAgentPresentation(id: "A", deviceName: "Redmi K40", phoneNumber: nil,
+            agentKind: nil, cloudOnline: true, vowlanOnline: false, isCurrent: true)
+        XCTAssertFalse(plain.hasAlias)
+        XCTAssertEqual(plain.reportedName, "Redmi K40")
+        let aliased = AndroidAgentPresentation(id: "A", deviceName: "加拿大电信", phoneNumber: nil,
+            agentKind: nil, cloudOnline: true, vowlanOnline: false, isCurrent: true, reportedName: "Redmi K40")
+        XCTAssertTrue(aliased.hasAlias)
+        XCTAssertEqual(aliased.reportedName, "Redmi K40")
+    }
+
     func testOutgoingSMSSendStateSurvivesPersistenceAndLegacyRecordsDecodeAsSent() throws {
         var pending = SMSMessage(sender: "10086", content: "synthetic", code: nil, timestamp: Date(),
                                  deliveryID: nil, direction: .outgoing, sourceAgentID: "android-A",

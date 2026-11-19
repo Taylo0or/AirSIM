@@ -211,6 +211,33 @@ enum PairedAndroidDeviceStore {
     }
 }
 
+/// User-chosen display names ("备注名") for paired Android devices. Stored only on
+/// this iPhone and keyed by the authenticated Agent ID; the reported name is kept.
+enum AndroidDeviceAliasStore {
+    static let key = "airsim.android-device-aliases.v1"
+    static let maximumLength = 32
+
+    static func alias(for id: String, defaults: UserDefaults = .standard) -> String? {
+        guard let value = (defaults.dictionary(forKey: key) as? [String: String])?[id] else { return nil }
+        return normalized(value)
+    }
+
+    /// A nil or blank alias restores the device's reported name.
+    static func set(_ alias: String?, for id: String, defaults: UserDefaults = .standard) {
+        guard !id.isEmpty else { return }
+        var values = defaults.dictionary(forKey: key) as? [String: String] ?? [:]
+        values[id] = alias.flatMap(normalized)
+        defaults.set(values, forKey: key)
+    }
+
+    static func normalized(_ value: String) -> String? {
+        let singleLine = value.components(separatedBy: .newlines).joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !singleLine.isEmpty else { return nil }
+        return String(singleLine.prefix(maximumLength))
+    }
+}
+
 struct ConnectionModeRuntimePolicy: Equatable, Sendable {
     let mode: AirSIMConnectionMode
 

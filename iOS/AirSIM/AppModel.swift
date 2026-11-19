@@ -1284,13 +1284,14 @@ final class AppModel: ObservableObject {
         return values.values.map { item in
             AndroidAgentPresentation(
                 id: item.id,
-                deviceName: item.deviceName,
+                deviceName: AndroidDeviceAliasStore.alias(for: item.id) ?? item.deviceName,
                 phoneNumber: item.phoneNumber,
                 agentKind: item.agentKind,
                 cloudOnline: item.cloudOnline,
                 vowlanOnline: item.vowlanOnline,
                 bluetoothOnline: item.bluetoothOnline,
-                isCurrent: item.id == currentID
+                isCurrent: item.id == currentID,
+                reportedName: item.deviceName
             )
         }.sorted {
             if $0.isCurrent != $1.isCurrent { return $0.isCurrent }
@@ -1408,8 +1409,10 @@ final class AppModel: ObservableObject {
     /// History retains identity/name only; numbers and online state come from the live session.
     var pairedDeviceHistory: [AndroidAgentPresentation] {
         var values = Dictionary(uniqueKeysWithValues: pairedDeviceRecords.map {
-            ($0.id, AndroidAgentPresentation(id: $0.id, deviceName: $0.deviceName, phoneNumber: nil,
-                agentKind: $0.agentKind, cloudOnline: false, vowlanOnline: false, isCurrent: false))
+            ($0.id, AndroidAgentPresentation(id: $0.id,
+                deviceName: AndroidDeviceAliasStore.alias(for: $0.id) ?? $0.deviceName, phoneNumber: nil,
+                agentKind: $0.agentKind, cloudOnline: false, vowlanOnline: false, isCurrent: false,
+                reportedName: $0.deviceName))
         })
         let registeredCloudIDs = Set((cloudAgentDirectory ?? cloudAgentStatus)?.agents.map(\.id) ?? [])
         for agent in pairedAndroidAgents where values[agent.id] != nil || registeredCloudIDs.contains(agent.id)
@@ -1420,13 +1423,22 @@ final class AppModel: ObservableObject {
             .sorted { $0.deviceName.localizedCaseInsensitiveCompare($1.deviceName) == .orderedAscending }
     }
 
+    /// Sets, or clears with nil/blank, the local display name of a paired Android device.
+    func setDeviceAlias(_ alias: String?, for agentID: String) {
+        AndroidDeviceAliasStore.set(alias, for: agentID)
+        objectWillChange.send()
+        publishWidgetSnapshot()
+        refreshVoBLELiveActivity()
+    }
+
     private func rememberVerifiedDevices() {
         let registeredCloudIDs = Set((cloudAgentDirectory ?? cloudAgentStatus)?.agents.map(\.id) ?? [])
         for agent in pairedAndroidAgents where registeredCloudIDs.contains(agent.id)
                 || agent.cloudOnline || agent.bluetoothOnline
                 || (agent.vowlanOnline && vowlan.availability.isOnlineForDisplay
                     && vowlan.discoveredAgents.contains { $0.id == agent.id && $0.endpoint == vowlan.availability.endpoint }) {
-            PairedAndroidDeviceStore.remember(.init(id: agent.id, deviceName: agent.deviceName, agentKind: agent.agentKind))
+            // Persist the reported name; a local alias is applied at presentation time.
+            PairedAndroidDeviceStore.remember(.init(id: agent.id, deviceName: agent.reportedName, agentKind: agent.agentKind))
         }
         let records = PairedAndroidDeviceStore.records()
         if records != pairedDeviceRecords { pairedDeviceRecords = records }

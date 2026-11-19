@@ -273,6 +273,10 @@ struct AndroidAgentPresentation: Equatable, Identifiable, Sendable {
     let vowlanOnline: Bool
     let bluetoothOnline: Bool
     let isCurrent: Bool
+    /// Name reported by the Android device; `deviceName` may be a local alias.
+    let reportedName: String
+
+    var hasAlias: Bool { deviceName != reportedName }
 
     init(
         id: String,
@@ -282,10 +286,12 @@ struct AndroidAgentPresentation: Equatable, Identifiable, Sendable {
         cloudOnline: Bool,
         vowlanOnline: Bool,
         bluetoothOnline: Bool = false,
-        isCurrent: Bool
+        isCurrent: Bool,
+        reportedName: String? = nil
     ) {
         self.id = id
         self.deviceName = deviceName
+        self.reportedName = reportedName ?? deviceName
         self.phoneNumber = phoneNumber
         self.agentKind = agentKind
         self.cloudOnline = cloudOnline
