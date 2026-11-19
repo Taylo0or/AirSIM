@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import UIKit
+import UserNotifications
 import WidgetKit
 
 enum AppForegroundRecoveryPolicy {
@@ -2243,6 +2244,7 @@ final class AppModel: ObservableObject {
         // 先加载手机副本，再启动轮询，避免模块暂时离线时界面显示为空。
         restoreLocalHistory()
         resyncPendingOutgoingSMS()
+        Task { await importDeliveredCloudSMS() }
         Task { await contacts.loadIfAuthorized() }
         if IncomingCallPresentationRequest.isPending() { presentCurrentCallInApp() }
         presentManagedCallAfterForegroundTransition()
@@ -2302,6 +2304,7 @@ final class AppModel: ObservableObject {
         // 回到前台重新做并集合并，不能让早期空读取覆盖手机里的持久化记录。
         restoreLocalHistory()
         resyncPendingOutgoingSMS()
+        Task { await importDeliveredCloudSMS() }
         Task { await contacts.loadIfAuthorized() }
         if IncomingCallPresentationRequest.isPending() { presentCurrentCallInApp() }
         presentManagedCallAfterForegroundTransition()
@@ -3864,6 +3867,13 @@ final class AppModel: ObservableObject {
     }
 
     func refreshMessages(silently: Bool = false) async {
+        guard verifiedVoWLANAPI() != nil || !CloudSignalingPreference.isEnabled() else {
+            // Away from the phone's Wi-Fi the Agent cannot be polled; cloud SMS arrive as
+            // pushes instead. Import those still in Notification Center rather than failing.
+            await importDeliveredCloudSMS()
+            if !silently { errorMessage = nil }
+            return
+        }
         do {
             guard let samsungAPI = verifiedVoWLANAPI() else {
                 throw CallKitBridgeError.noReachableTransport
@@ -3874,6 +3884,28 @@ final class AppModel: ObservableObject {
         } catch {
             if !silently { errorMessage = error.localizedDescription }
         }
+    }
+
+    /// Imports cloud SMS pushes still listed in Notification Center. Pushes that arrived
+    /// while AirSIM was not running (no background wake) never reached the history.
+    @discardableResult
+    func importDeliveredCloudSMS() async -> Int {
+        let delivered = await UNUserNotificationCenter.current().deliveredNotifications()
+        let pushes = delivered.compactMap { notification -> IncomingRemoteSMS? in
+            let info = notification.request.content.userInfo
+            guard info["event"] as? String == "incoming_sms",
+                  let pushed = try? IncomingRemoteSMS(userInfo: info),
+                  !pushed.contentTruncated else { return nil }
+            return pushed
+        }
+        guard !pushes.isEmpty else { return 0 }
+        let saved = PairedAndroidDeviceStore.withSMSIdentitySnapshot(
+            localAgentIDs: localDevices.agentIDs, defaults: pairedDeviceDefaults
+        ) { current in historyStore.ingestMessages(pushes.map(\.message), legacySourceAgentID: current.uniqueAgentID) }
+        guard let saved, saved.changed else { return 0 }
+        messages = normalizedMessages(saved.messages)
+        publishWidgetSnapshot()
+        return saved.newMessages.count
     }
 
     /// URC 已经让 Agent 读取了单条短信；事件路径只取交付队列，不再触发全量 CMGL。
