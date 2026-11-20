@@ -764,7 +764,7 @@ private struct PairedAndroidAgentsView: View {
     }
 }
 
-private struct DialToneButtonStyle: ButtonStyle {
+struct DialToneButtonStyle: ButtonStyle {
     let digit: String
     let enabled: Bool
     func makeBody(configuration: Configuration) -> some View {
@@ -1613,7 +1613,7 @@ private final class SMSMessageShareItem: NSObject, UIActivityItemSource {
     }
 }
 
-private struct MessageComposer: View {
+struct MessageComposer: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var model: AppModel
     @State private var recipient: String

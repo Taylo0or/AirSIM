@@ -649,7 +649,10 @@ struct AirSIMSettingsView: View {
         case remark
     }
 
-    @State private var path: [AirSIMSettingsPage] = []
+    @State private var path: [AirSIMSettingsPage]
+
+    /// `initialPath` opens straight onto a page (the 暖橙 shell's 我的 rows); Back returns to 设置.
+    init(initialPath: [AirSIMSettingsPage] = []) { _path = State(initialValue: initialPath) }
     @State private var localCheckRunning = false
     @State private var localCheckDate: Date?
     @State private var localCheckStatus: String?

@@ -55,6 +55,37 @@ struct SMSNavigationFixture {
                 SMSMessage(sender: "2025550100", content: "latest-only", code: nil, timestamp: Date(timeIntervalSince1970: 200)),
                 SMSMessage(sender: "3035550123", content: "travel-plan", code: nil, timestamp: Date(timeIntervalSince1970: 300))])
         }
+        if ProcessInfo.processInfo.environment["AIRSIM_UI_WARM"] == "1" {
+            // 暖橙 shell screenshots: voip.ms-style lines, an MMS, a voicemail and line-tagged calls.
+            let agent = "voipms-fixture", now = Date()
+            SIMLineDisplay.update(agentID: agent, slots: try! JSONDecoder().decode([AndroidSIMSlot].self, from: Data("""
+            [{"id":"voipms:2365550777","label":"voip.ms","number":"+12365550777","slot_index":0},
+             {"id":"voipms:6725550111","label":"voip.ms","number":"+16725550111","slot_index":1}]
+            """.utf8)))
+            history.saveMessages([
+                SMSMessage(sender: "22922", content: "Best Buy: Your verification code is 640970. It's valid for 5 minutes.",
+                           code: "640970", timestamp: now.addingTimeInterval(-3_600), deliveryID: "warm-1",
+                           sourceAgentID: agent, simSlot: "SIM 1"),
+                SMSMessage(sender: "+17785550591", content: "语音留言 0:12", code: nil, timestamp: now.addingTimeInterval(-7_200),
+                           deliveryID: "warm-vm", sourceAgentID: agent, simSlot: "SIM 2",
+                           attachments: [SMSAttachment(kind: .audio, url: "https://relay.example/voipms/media/s/vm.wav", mime: "audio/wav", duration: 12)]),
+                SMSMessage(sender: "+16045550100", content: "[图片]", code: nil, timestamp: now.addingTimeInterval(-90_000),
+                           deliveryID: "warm-mms", sourceAgentID: agent, simSlot: "SIM 2",
+                           attachments: [SMSAttachment(kind: .image, url: "https://relay.example/voipms/media/s/a.jpg", mime: "image/jpeg")]),
+            ])
+            let calls = [
+                CallRecord(id: "warm-c1", index: 0, direction: "outgoing", state: "ended", number: "+17785550591",
+                           startedAt: now.addingTimeInterval(-1_800), updatedAt: now, endedAt: now.addingTimeInterval(-1_779),
+                           missed: false, connectedAt: now.addingTimeInterval(-1_800), sourceAgentID: agent, slotIndex: 1),
+                CallRecord(id: "warm-c2", index: 0, direction: "incoming", state: "ended", number: "+17785550591",
+                           startedAt: now.addingTimeInterval(-7_205), updatedAt: now, endedAt: now.addingTimeInterval(-7_190),
+                           missed: true, sourceAgentID: agent, slotIndex: 1),
+                CallRecord(id: "warm-c3", index: 0, direction: "incoming", state: "ended", number: "+14375550937",
+                           startedAt: now.addingTimeInterval(-95_000), updatedAt: now, endedAt: now.addingTimeInterval(-94_900),
+                           missed: false, connectedAt: now.addingTimeInterval(-95_000), sourceAgentID: agent, slotIndex: 0),
+            ]
+            history.saveCallHistory(calls)
+        }
         let contactCache = ContactCacheStore(fileURL: FileManager.default.temporaryDirectory
             .appendingPathComponent("AirSIM-UI-contacts-\(UUID().uuidString).json"))
         let model = AppModel(contactStore: ContactStore(fetcher: NavigationContactFetcher(), cache: contactCache),
@@ -71,6 +102,7 @@ struct SMSNavigationFixture {
             }
             history.saveCallHistory(calls); model.callHistory = calls
         }
+        if ProcessInfo.processInfo.environment["AIRSIM_UI_WARM"] == "1" { model.callHistory = history.loadCallHistory() }
         let updates = AppUpdateController(defaults: defaults, fetch: { [] })
         updates.acknowledgeNotes()
         return Self(model: model, updates: updates, defaults: defaults)

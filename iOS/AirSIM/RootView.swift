@@ -28,6 +28,9 @@ enum SystemCommunicationURL {
 }
 
 enum PhoneTab: String, CaseIterable, Identifiable {
+    /// 暖橙 shell only (首页 and the 语音信箱 segment); the classic tab bar shows them as 拨号 / 最近.
+    case home = "首页"
+    case voicemail = "语音信箱"
     case dial = "拨号"
     case recents = "最近通话"
     case messages = "短信"
@@ -43,6 +46,8 @@ enum PhoneTab: String, CaseIterable, Identifiable {
         case .messages: return "bubble.left.and.bubble.right"
         case .contacts: return "person.crop.rectangle"
         case .settings: return "slider.horizontal.3"
+        case .home: return "house"
+        case .voicemail: return "recordingtape"
         }
     }
 
@@ -93,6 +98,12 @@ struct RootView: View {
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
+            Group {
+              if settings.theme.restylesSurfaces {
+                WarmShellView(phoneTab: warmTabBinding, pendingSMSRecipient: $pendingSMSRecipient,
+                              conversationSender: $conversationSender, showingConversation: $showingConversation,
+                              onCall: dial, onMessage: composeMessage, openConversation: showSMSConversation)
+              } else {
                 TabView(selection: selectedTabBinding) {
                     DialPadView()
                         .tag(PhoneTab.dial)
@@ -156,6 +167,8 @@ struct RootView: View {
                         }.environment(\.symbolVariants, .none) }
 
                 }
+              }
+            }
                 // Keep navigation state, but remove the underlying native tab
                 // chrome from rendering, hit testing and VoiceOver during calls.
                 // Duo promotes that chrome outside the SwiftUI content stack.
@@ -291,9 +304,23 @@ struct RootView: View {
         else { presentAppUpdateIfIdle() }
     }
 
+    /// The 暖橙 shell sees every destination, including 首页 and 语音信箱.
+    private var warmTabBinding: Binding<PhoneTab> {
+        Binding(
+            get: { PhoneTab(rawValue: selectedTabRawValue) ?? .home },
+            set: { selectedTabRawValue = $0.rawValue }
+        )
+    }
+
     private var selectedTabBinding: Binding<PhoneTab> {
         Binding(
-            get: { PhoneTab(rawValue: selectedTabRawValue) ?? .dial },
+            get: {
+                switch PhoneTab(rawValue: selectedTabRawValue) ?? .dial {
+                case .home: return .dial
+                case .voicemail: return .recents
+                case let tab: return tab
+                }
+            },
             set: { newTab in
                 guard newTab.rawValue != selectedTabRawValue else { return }
                 selectedTabRawValue = newTab.rawValue
