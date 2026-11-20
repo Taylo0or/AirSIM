@@ -225,6 +225,11 @@ enum SIMLineDisplay {
         let compact = number.filter { !$0.isWhitespace && $0 != "-" }
         var digits = Substring(compact)
         if digits.hasPrefix("+86") { digits = digits.dropFirst(3) } else if digits.hasPrefix("86"), digits.count == 13 { digits = digits.dropFirst(2) }
+        // North American lines (e.g. voip.ms DIDs) read as (236) 555-0777.
+        if compact.hasPrefix("+1"), compact.count == 12, compact.dropFirst(2).allSatisfy(\.isNumber) {
+            let nanp = compact.dropFirst(2)
+            return "(\(nanp.prefix(3))) \(nanp.dropFirst(3).prefix(3))-\(nanp.suffix(4))"
+        }
         guard digits.count == 11, digits.first == "1", digits.allSatisfy(\.isNumber) else { return compact }
         let value = String(digits)
         return "\(value.prefix(3)) \(value.dropFirst(3).prefix(4)) \(value.suffix(4))"
@@ -346,6 +351,7 @@ struct AndroidAgentPresentation: Equatable, Identifiable, Sendable {
         switch agentKind {
         case "standalone": return "Standalone"
         case "avf": return "AVF Agent"
+        case "voipms": return "voip.ms"
         default: return "Android Agent"
         }
     }

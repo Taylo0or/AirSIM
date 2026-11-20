@@ -3294,7 +3294,8 @@ final class AirSIMTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
         XCTAssertEqual(SIMLineDisplay.format("+8618912345664"), "189 1234 5664")
         XCTAssertEqual(SIMLineDisplay.format("8618912345664"), "189 1234 5664")
-        XCTAssertEqual(SIMLineDisplay.format("+1 604-555-0100"), "+16045550100")
+        XCTAssertEqual(SIMLineDisplay.format("+1 604-555-0100"), "(604) 555-0100")
+        XCTAssertEqual(SIMLineDisplay.format("+447700900123"), "+447700900123")
         let slots = [
             AndroidSIMSlot(id: "a/1", label: "SIM 1", number: "+8618912345664", isDefault: true, slotIndex: 0,
                            subID: 1, carrierName: nil, isEmbedded: nil, isDefaultVoice: nil, isDefaultSMS: nil),

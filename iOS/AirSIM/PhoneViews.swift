@@ -1357,7 +1357,10 @@ struct MessageThreadView: View {
         let body = trimmedReply
         guard !body.isEmpty else { return }
         // The bubble appears at once as "发送中…" and settles in the background.
-        if model.enqueueSMS(to: sender, content: body) { reply = "" }
+        // Reply from the line this conversation last used (e.g. a voip.ms number), not
+        // whichever device happens to be bound.
+        let line = messages.max { $0.timestamp < $1.timestamp }?.sourceAgentID
+        if model.enqueueSMS(to: sender, content: body, agentID: line) { reply = "" }
     }
 
     var body: some View {

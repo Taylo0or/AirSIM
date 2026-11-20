@@ -3564,14 +3564,17 @@ final class AppModel: ObservableObject {
         let smsAgentID: String?
         let smsSlot: String?
         let commandID: UUID
+        /// A conversation's own line; never silently swapped for the bound device.
+        let explicitAgentID: String?
     }
 
     /// Shows the SMS in the conversation at once ("发送中…") and delivers it in the
     /// background; the bubble is updated to sent / failed / unconfirmed afterwards.
     /// Returns false only when the input is rejected and nothing was recorded.
     @discardableResult
-    func enqueueSMS(to phone: String, content: String) -> Bool {
-        guard let pending = beginPendingSMS(to: phone, content: content) else { return false }
+    func enqueueSMS(to phone: String, content: String, agentID: String? = nil) -> Bool {
+        let line = agentID.flatMap { id in pairedAndroidAgents.contains { $0.id == id } || PairedAndroidDeviceStore.permits(id) ? id : nil }
+        guard let pending = beginPendingSMS(to: phone, content: content, agentID: line) else { return false }
         Task { _ = await deliverPendingSMS(pending) }
         return true
     }
@@ -3586,11 +3589,11 @@ final class AppModel: ObservableObject {
         guard message.isOutgoing, message.sendState == .failed || message.sendState == .unconfirmed else { return }
         historyStore.deleteMessages(ids: [message.id], from: messages)
         if let latest = historyStore.messageSnapshot() { messages = normalizedMessages(latest) }
-        enqueueSMS(to: message.sender, content: message.content)
+        enqueueSMS(to: message.sender, content: message.content, agentID: message.sourceAgentID)
     }
 
-    private func beginPendingSMS(to phone: String, content: String) -> PendingSMS? {
-        let boundAtStart = boundAgentID
+    private func beginPendingSMS(to phone: String, content: String, agentID: String? = nil) -> PendingSMS? {
+        let boundAtStart = agentID ?? boundAgentID
         let target = Self.validatedNumber(phone)
         let body = content.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !target.isEmpty, !body.isEmpty, body.count <= 2_000 else { return nil }
@@ -3609,7 +3612,8 @@ final class AppModel: ObservableObject {
             sendState: .sending, sendToken: "local|\(commandID.uuidString.lowercased())"
         )
         let pending = PendingSMS(record: record, target: target, body: body, boundAtStart: boundAtStart,
-                                 smsAgentID: smsAgentID, smsSlot: smsSlot, commandID: commandID)
+                                 smsAgentID: smsAgentID, smsSlot: smsSlot, commandID: commandID,
+                                 explicitAgentID: agentID)
         inFlightSMSTokens.insert(record.sendToken!)
         storeOutgoingSMS(record)
         return pending
@@ -3649,7 +3653,11 @@ final class AppModel: ObservableObject {
             // The outgoing SMS selection is independent of the current call's
             // immutable PCM route and of the legacy default browser's status.
             let localAPI: AirSIMAPI?
-            if let boundAtStart {
+            if let explicit = pending.explicitAgentID {
+                // A conversation's line (e.g. voip.ms) is reachable only through its own
+                // route; the bound phone's VoWLAN would send from the wrong number.
+                localAPI = localDevices.api(for: explicit)
+            } else if let boundAtStart {
                 localAPI = localDevices.api(for: boundAtStart) ?? verifiedVoWLANAPI()
             } else {
                 localAPI = verifiedVoWLANAPI()
