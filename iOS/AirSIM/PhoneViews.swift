@@ -459,11 +459,8 @@ struct DialPadView: View {
                 Task { await model.dial() }
             } label: {
                 Circle()
-                    .fill(warmTheme
-                          ? AnyShapeStyle(LinearGradient(colors: WarmPalette.gradient, startPoint: .topLeading, endPoint: .bottomTrailing))
-                          : AnyShapeStyle(Color.green))
+                    .fill(warmTheme ? AppTheme.warm.accent : Color.green)
                     .frame(width: metrics.keySize, height: metrics.keySize)
-                    .shadow(color: warmTheme ? AppTheme.warm.accent.opacity(0.38) : .clear, radius: 16, x: 0, y: 8)
                     .overlay {
                         Image(systemName: "phone.fill")
                             .font(.system(size: metrics.callIconSize, weight: .semibold))
@@ -783,7 +780,7 @@ enum DialToneTiming {
     static func releaseDelay(held: TimeInterval) -> TimeInterval { max(0, minimumDuration - max(0, held)) }
 }
 
-@MainActor private final class LocalDialTone {
+@MainActor final class LocalDialTone {
     static let shared = LocalDialTone()
     private var player: AVAudioPlayer?
     private var startedAt: TimeInterval = 0
@@ -1275,8 +1272,10 @@ struct MessagesView: View {
 private struct SMSAccountPicker: View {
     @EnvironmentObject private var model: AppModel
     let recipient: String
+    /// The conversation's own line (what `sendReply` really uses); falls back to the bound device.
+    var agentID: String? = nil
     var body: some View {
-        if let agentID = model.currentAndroidAgent?.id ?? AndroidAgentBindingPreference.selected() {
+        if let agentID = agentID ?? model.currentAndroidAgent?.id ?? AndroidAgentBindingPreference.selected() {
             let slots = model.smsSIMSlots(for: agentID)
             if !slots.isEmpty {
                 CompactSIMPicker(slots: slots,
@@ -1464,7 +1463,7 @@ struct MessageThreadView: View {
             ToolbarItem(placement: .principal) {
                 VStack(spacing: 2) {
                     Text(model.contacts.displayName(for: sender)).font(.headline).lineLimit(1)
-                    SMSAccountPicker(recipient: sender)
+                    SMSAccountPicker(recipient: sender, agentID: conversationLine)
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {

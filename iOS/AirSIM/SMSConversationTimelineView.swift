@@ -430,9 +430,9 @@ enum SMSCodeHighlight {
     static func renderedBody(in text: String, outgoing: Bool) -> (text: NSAttributedString, code: String)? {
         guard let match = match(in: text) else { return nil }
         let attributed = NSMutableAttributedString(string: text, attributes: [
-            .font: UIFont.preferredFont(forTextStyle: .body), .foregroundColor: outgoing ? UIColor.white : UIColor.label])
+            .font: UIFont.preferredFont(forTextStyle: .body), .foregroundColor: outgoing ? SMSThemeColors.outgoingText : SMSThemeColors.incomingText])
         attributed.addAttributes([.font: UIFont.preferredFont(forTextStyle: .headline),
-            .backgroundColor: UIColor.systemYellow.withAlphaComponent(0.22),
+            .backgroundColor: AppTheme.current.restylesSurfaces ? WarmPalette.accentSoft : UIColor.systemYellow.withAlphaComponent(0.22),
             .link: URL(string: "airsim-code://copy/" + match.code)!], range: match.range)
         return (attributed, match.code)
     }
@@ -546,7 +546,7 @@ private final class SMSConversationCell: UICollectionViewCell, UIEditMenuInterac
         body.accessibilityLanguage = locale.identifier
         let outgoing = item.message.isOutgoing
         body.accessibilityHint = outgoing ? item.message.outgoingStatusLabel : nil
-        body.textColor = outgoing ? .white : .label
+        body.textColor = outgoing ? SMSThemeColors.outgoingText : SMSThemeColors.incomingText
         highlightedCode = nil
         let attachments = Array((item.message.attachments ?? []).prefix(attachmentViews.count))
         for (index, view) in attachmentViews.enumerated() {
@@ -561,10 +561,11 @@ private final class SMSConversationCell: UICollectionViewCell, UIEditMenuInterac
             body.attributedText = highlighted.text
             highlightedCode = highlighted.code
         }
-        body.linkTextAttributes = [.foregroundColor: outgoing ? UIColor.white : UIColor.link,
+        body.linkTextAttributes = [.foregroundColor: outgoing ? SMSThemeColors.outgoingText : (AppTheme.current.restylesSurfaces ? AppTheme.warm.uiAccent : UIColor.link),
                                    .underlineStyle: NSUnderlineStyle.single.rawValue]
         bubble.outgoing = outgoing
-        bubble.hasTail = item.showsTail
+        // 暖橙 bubbles: radius 16, no tail.
+        bubble.hasTail = item.showsTail && !AppTheme.current.restylesSurfaces
         bubble.refreshColors()
         dateLabel.text = date
         dateLabel.isHidden = !item.showsTimestamp
@@ -796,7 +797,7 @@ private final class SMSBubbleView: UIView {
     func bubblePath() -> UIBezierPath {
         let inset: CGFloat = hasTail ? 5 : 0
         let rect = bounds.inset(by: UIEdgeInsets(top: 0, left: outgoing ? 0 : inset, bottom: 0, right: outgoing ? inset : 0))
-        let path = UIBezierPath(roundedRect: rect, cornerRadius: min(19, rect.height / 2))
+        let path = UIBezierPath(roundedRect: rect, cornerRadius: min(AppTheme.current.restylesSurfaces ? 16 : 19, rect.height / 2))
         if hasTail {
             let tail = UIBezierPath()
             if outgoing {
@@ -1000,4 +1001,6 @@ enum SMSThemeColors {
     static var background: UIColor { AppTheme.current.restylesSurfaces ? WarmPalette.background : .systemBackground }
     static var outgoingBubble: UIColor { AppTheme.current.restylesSurfaces ? AppTheme.warm.uiAccent : .systemGreen }
     static var incomingBubble: UIColor { AppTheme.current.restylesSurfaces ? WarmPalette.soft : .systemGray5 }
+    static var outgoingText: UIColor { AppTheme.current.restylesSurfaces ? WarmPalette.onAccent : .white }
+    static var incomingText: UIColor { AppTheme.current.restylesSurfaces ? WarmPalette.textPrimary : .label }
 }

@@ -522,12 +522,11 @@ private struct AirSIMSettingsLink: View {
                 }
             } icon: {
                 if AppTheme(rawValue: themeRaw)?.restylesSurfaces == true {
-                    // 暖橙: accent glyph on a beige circle.
+                    // 暖橙: bare 20pt glyph in secondary text color.
                     Image(systemName: icon)
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(.tint)
-                        .frame(width: 34, height: 34)
-                        .background(Color(uiColor: WarmPalette.soft), in: Circle())
+                        .font(.system(size: 18, weight: .regular))
+                        .foregroundStyle(Color(uiColor: WarmPalette.textSecondary))
+                        .frame(width: 26)
                 } else {
                     Image(systemName: icon).foregroundStyle(.tint).frame(width: 26)
                 }

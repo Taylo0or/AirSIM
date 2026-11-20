@@ -76,10 +76,13 @@ enum AppTheme: String, CaseIterable, Identifiable {
         switch self {
         case .forest: return UIColor(red: 0.12, green: 0.47, blue: 0.38, alpha: 1)
         case .sky: return UIColor(red: 0.12, green: 0.56, blue: 0.88, alpha: 1)
-        case .warm: return UIColor(red: 0.937, green: 0.478, blue: 0.157, alpha: 1)
+        // Copper: #B84912 on paper, #F5A16B on dark (AirSIM 暖橙 design, 2026-11-20).
+        case .warm: return UIColor { $0.userInterfaceStyle == .dark
+            ? UIColor(red: 0xF5 / 255, green: 0xA1 / 255, blue: 0x6B / 255, alpha: 1)
+            : UIColor(red: 0xB8 / 255, green: 0x49 / 255, blue: 0x12 / 255, alpha: 1) }
         }
     }
-    /// 暖橙 restyles the surfaces too (cream backdrop, white cards, rounded type);
+    /// 暖橙 restyles the surfaces and the app shell (paper backdrop, flat lists, copper accent);
     /// 墨绿/天蓝 keep the system surfaces and only change the accent.
     var restylesSurfaces: Bool { self == .warm }
     /// For UIKit views that are not part of the SwiftUI environment.

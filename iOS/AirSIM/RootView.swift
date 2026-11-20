@@ -178,7 +178,6 @@ struct RootView: View {
                 .phoneTabBarAlwaysExpanded()
                 .phoneTabSelectionFeedback(selectedTabRawValue)
                 .tint(settings.theme.accent)
-                .fontDesign(settings.theme.restylesSurfaces ? .rounded : .default)
 
             if let call = presentedCall {
                 ActiveCallView(call: call)
@@ -459,7 +458,7 @@ struct PhoneCard: ViewModifier {
     }
 }
 
-/// 暖橙主题的配色：米白底、白卡片 + 细边框、米色圆形底、橙色渐变（深色模式为暖炭色系）。
+/// 暖橙主题的设计令牌（见 docs/design/warm-2026-11-20/DESIGN.md §3.1）：纸白底、平面列表、铜橙只用于操作与选中。
 enum WarmPalette {
     private static func rgb(_ hex: UInt32, _ alpha: CGFloat = 1) -> UIColor {
         UIColor(red: CGFloat((hex >> 16) & 0xff) / 255, green: CGFloat((hex >> 8) & 0xff) / 255,
@@ -468,23 +467,32 @@ enum WarmPalette {
     private static func dynamic(_ light: UIColor, _ dark: UIColor) -> UIColor {
         UIColor { $0.userInterfaceStyle == .dark ? dark : light }
     }
-    static let background = dynamic(rgb(0xF6F3EE), rgb(0x15120F))
-    static let card = dynamic(.white, rgb(0x221E1A))
-    static let cardBorder = dynamic(rgb(0xECE5DB), UIColor(white: 1, alpha: 0.07))
-    /// Avatar / icon circles and the incoming SMS bubble.
-    static let soft = dynamic(rgb(0xF1EBE3), rgb(0x2E2924))
-    static let accentSoft = dynamic(rgb(0xFDEBDC), rgb(0x3B2618))
-    static let gradient = [Color(uiColor: rgb(0xF4A055)), Color(uiColor: rgb(0xEC6A24))]
+    static let background = dynamic(rgb(0xF7F5F1), rgb(0x161615))
+    static let card = dynamic(.white, rgb(0x222220))            // surface
+    static let cardBorder = dynamic(rgb(0xDCD8D0), rgb(0x3D3D38)) // separator
+    static let soft = dynamic(rgb(0xEEEBE5), rgb(0x30302D))       // surfaceMuted: search, segments, incoming bubble
+    static let accentSoft = dynamic(rgb(0xF8E9DE), rgb(0x35251B))
+    static let textPrimary = dynamic(rgb(0x1E1D1B), rgb(0xF3F1EC))
+    static let textSecondary = dynamic(rgb(0x66635E), rgb(0xABA7A0))
+    static let textDisabled = dynamic(rgb(0x99948D), rgb(0x726F69))
+    static let onAccent = dynamic(.white, rgb(0x1E1D1B))
+    static let controlBorder = dynamic(rgb(0x8B867E), rgb(0x858078))
+    static let positive = dynamic(rgb(0x1F7654), rgb(0x78C9A0))
+    static let danger = dynamic(rgb(0xBF3535), rgb(0xFF8D88))
+    static let warningText = dynamic(rgb(0x84520B), rgb(0xE9C17A))
+    static let warningSurface = dynamic(rgb(0xF3E9D8), rgb(0x332B1E))
+    static let disabledFill = dynamic(rgb(0xE4E0D9), rgb(0x353531))
 }
 
+/// Surface block: white / #222220, hairline edge, no shadow (shadows are 0 in this theme).
 struct WarmCardSurface: ViewModifier {
     let cornerRadius: CGFloat
+    @Environment(\.displayScale) private var displayScale
     func body(content: Content) -> some View {
-        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: min(cornerRadius, 12), style: .continuous)
         content
             .background(Color(uiColor: WarmPalette.card), in: shape)
-            .overlay(shape.strokeBorder(Color(uiColor: WarmPalette.cardBorder), lineWidth: 1))
-            .shadow(color: .black.opacity(0.045), radius: 12, x: 0, y: 4)
+            .overlay(shape.strokeBorder(Color(uiColor: WarmPalette.cardBorder), lineWidth: 1 / max(displayScale, 1)))
     }
 }
 

@@ -489,17 +489,17 @@ final class SMSNavigationUITests: XCTestCase {
         }
         XCTAssertTrue(button("首页").waitForExistence(timeout: 10))
         button("首页").tap()
-        XCTAssertTrue(app.staticTexts["我的号码"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["还没有线路"].waitForExistence(timeout: 5))
         shot("warm-home")
         button("通话").tap()
         for segment in ["拨号", "最近", "联系人", "语音信箱"] {
             XCTAssertTrue(button(segment).waitForExistence(timeout: 5), segment)
             button(segment).tap()
         }
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "555-0591")).firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "555 0591")).firstMatch.waitForExistence(timeout: 5))
         shot("warm-voicemail")
         button("短信").tap()
-        XCTAssertTrue(app.buttons["写短信"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["新建短信"].waitForExistence(timeout: 5))
         button("我的").tap()
         XCTAssertTrue(app.staticTexts["连接与设备"].waitForExistence(timeout: 5))
         shot("warm-account")

@@ -244,6 +244,8 @@ final class SMSAudioPlayback: NSObject, AVAudioPlayerDelegate {
         guard let player, player.duration > 0 else { return 0 }
         return player.currentTime / player.duration
     }
+    var currentTime: TimeInterval { player?.currentTime ?? 0 }
+    var duration: TimeInterval { player?.duration ?? 0 }
 
     func isPlaying(_ key: String) -> Bool { playingKey == key && player?.isPlaying == true }
 
