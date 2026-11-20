@@ -61,10 +61,31 @@ enum AppLanguage: String, CaseIterable, Identifiable {
 }
 
 enum AppTheme: String, CaseIterable, Identifiable {
-    case forest, sky
+    case forest, sky, warm
+    static let storageKey = "airsim.ui-theme"
     var id: String { rawValue }
-    var title: String { self == .forest ? "墨绿" : "天蓝" }
-    var accent: Color { self == .forest ? Color(red: 0.12, green: 0.47, blue: 0.38) : Color(red: 0.12, green: 0.56, blue: 0.88) }
+    var title: String {
+        switch self {
+        case .forest: return "墨绿"
+        case .sky: return "天蓝"
+        case .warm: return "暖橙"
+        }
+    }
+    var accent: Color { Color(uiColor: uiAccent) }
+    var uiAccent: UIColor {
+        switch self {
+        case .forest: return UIColor(red: 0.12, green: 0.47, blue: 0.38, alpha: 1)
+        case .sky: return UIColor(red: 0.12, green: 0.56, blue: 0.88, alpha: 1)
+        case .warm: return UIColor(red: 0.937, green: 0.478, blue: 0.157, alpha: 1)
+        }
+    }
+    /// 暖橙 restyles the surfaces too (cream backdrop, white cards, rounded type);
+    /// 墨绿/天蓝 keep the system surfaces and only change the accent.
+    var restylesSurfaces: Bool { self == .warm }
+    /// For UIKit views that are not part of the SwiftUI environment.
+    static var current: AppTheme {
+        AppTheme(rawValue: UserDefaults.standard.string(forKey: storageKey) ?? "") ?? .sky
+    }
 }
 
 /// Snapshot this preference when a call begins; never reconfigure live audio
@@ -82,7 +103,7 @@ enum CarrierRingbackPreference {
 @MainActor
 final class AppSettings: ObservableObject {
     @Published var theme: AppTheme {
-        didSet { UserDefaults.standard.set(theme.rawValue, forKey: "airsim.ui-theme") }
+        didSet { UserDefaults.standard.set(theme.rawValue, forKey: AppTheme.storageKey) }
     }
     @Published var appearance: AppAppearance {
         didSet { UserDefaults.standard.set(appearance.rawValue, forKey: L10n.appearanceKey) }
@@ -93,7 +114,7 @@ final class AppSettings: ObservableObject {
 
     init() {
         let defaults = UserDefaults.standard
-        theme = AppTheme(rawValue: defaults.string(forKey: "airsim.ui-theme") ?? "sky") ?? .sky
+        theme = AppTheme(rawValue: defaults.string(forKey: AppTheme.storageKey) ?? "sky") ?? .sky
         appearance = AppAppearance(rawValue: defaults.string(forKey: L10n.appearanceKey) ?? "") ?? .system
         language = AppLanguage(rawValue: defaults.string(forKey: L10n.languageKey) ?? "") ?? .system
     }

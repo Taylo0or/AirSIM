@@ -177,7 +177,8 @@ private struct PureLocalSlideControl: View {
     }
 
     private var statusText: String { enabled ? "仅本地连接 · 云端已停用" : "按连接偏好运行" }
-    private var tint: Color { enabled ? .green : .blue }
+    @AppStorage(AppTheme.storageKey) private var themeRaw = AppTheme.sky.rawValue
+    private var tint: Color { enabled ? .green : (AppTheme(rawValue: themeRaw) ?? .sky).accent }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -510,6 +511,7 @@ private struct AirSIMSettingsLink: View {
     let page: AirSIMSettingsPage
     let icon: String
     var detail: String? = nil
+    @AppStorage(AppTheme.storageKey) private var themeRaw = AppTheme.sky.rawValue
 
     var body: some View {
         NavigationLink(value: page) {
@@ -519,7 +521,16 @@ private struct AirSIMSettingsLink: View {
                     if let detail { Text(detail).font(.caption).foregroundStyle(.secondary) }
                 }
             } icon: {
-                Image(systemName: icon).foregroundStyle(.blue).frame(width: 26)
+                if AppTheme(rawValue: themeRaw)?.restylesSurfaces == true {
+                    // 暖橙: accent glyph on a beige circle.
+                    Image(systemName: icon)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(.tint)
+                        .frame(width: 34, height: 34)
+                        .background(Color(uiColor: WarmPalette.soft), in: Circle())
+                } else {
+                    Image(systemName: icon).foregroundStyle(.tint).frame(width: 26)
+                }
             }
             .frame(minHeight: 44)
         }
@@ -562,7 +573,7 @@ private struct AirSIMSettingsHomeContent: View, Equatable {
                                     .font(.subheadline).foregroundStyle(.secondary)
                                 AndroidDeviceBatteryLabel(reading: snapshot.battery).font(.caption)
                             }
-                        } icon: { Image(systemName: "iphone.radiowaves.left.and.right").foregroundStyle(.blue) }
+                        } icon: { Image(systemName: "iphone.radiowaves.left.and.right").foregroundStyle(.tint) }
                         .padding(.vertical, 6)
                     }
                 } else {
@@ -735,6 +746,7 @@ struct AirSIMSettingsView: View {
             }
         }
             .formStyle(.grouped)
+            .phoneListBackground()
             .settingsSoftScrollEdge()
             .scrollDismissesKeyboard(.interactively)
 
@@ -775,13 +787,13 @@ struct AirSIMSettingsView: View {
                 ForEach(AirSIMConnectionMode.allCases) { mode in
                     Button { selectMode(mode) } label: {
                         HStack(alignment: .top, spacing: 12) {
-                            Image(systemName: modeIcon(mode)).frame(width: 24).foregroundStyle(.blue)
+                            Image(systemName: modeIcon(mode)).frame(width: 24).foregroundStyle(.tint)
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(mode.title).foregroundStyle(.primary)
                                 Text(mode.detail).font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer(minLength: 4)
-                            if selectedMode == mode { Image(systemName: "checkmark").foregroundStyle(.blue) }
+                            if selectedMode == mode { Image(systemName: "checkmark").foregroundStyle(.tint) }
                         }.padding(.vertical, 6)
                     }
                     .disabled(!AirSIMSettingsPolicy.canSelect(mode, pureLocal: pureLocalEnabled, callBusy: updateCallBusy))
@@ -869,7 +881,14 @@ struct AirSIMSettingsView: View {
         case .preferences:
             Section {
                 Picker("主题", selection: $settings.theme) {
-                    ForEach(AppTheme.allCases) { theme in Text(theme.title).tag(theme) }
+                    ForEach(AppTheme.allCases) { theme in
+                        Label {
+                            Text(theme.title)
+                        } icon: {
+                            Image(systemName: "circle.fill").foregroundStyle(theme.accent)
+                        }
+                        .tag(theme)
+                    }
                 }
                 Picker("外观", selection: $settings.appearance) {
                     ForEach(AppAppearance.allCases) { Text($0.title).tag($0) }

@@ -238,6 +238,7 @@ struct DialPadLayoutMetrics {
 
 struct DialPadView: View {
     @EnvironmentObject private var model: AppModel
+    @AppStorage(AppTheme.storageKey) private var themeRaw = AppTheme.sky.rawValue
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var deleteRepeatTask: Task<Void, Never>?
@@ -256,6 +257,7 @@ struct DialPadView: View {
     }
 
     private var isCompact: Bool { horizontalSizeClass == .compact }
+    private var warmTheme: Bool { AppTheme(rawValue: themeRaw)?.restylesSurfaces == true }
 
     var body: some View {
         NavigationStack {
@@ -352,8 +354,7 @@ struct DialPadView: View {
                                 }
                                 .padding(12)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(
-                                    .thinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                .phoneSurface(cornerRadius: 16)
                             } else if agentSection == .selection {
                                 Button {
                                     pairedAgentListPresentation = PairedAgentListPresentation()
@@ -378,9 +379,7 @@ struct DialPadView: View {
                                     }
                                     .padding(12)
                                     .frame(maxWidth: .infinity, alignment: .leading)
-                                    .background(
-                                        .thinMaterial,
-                                        in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                    .phoneSurface(cornerRadius: 16)
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityIdentifier("dial-pad-device-selector")
@@ -460,8 +459,11 @@ struct DialPadView: View {
                 Task { await model.dial() }
             } label: {
                 Circle()
-                    .fill(.green)
+                    .fill(warmTheme
+                          ? AnyShapeStyle(LinearGradient(colors: WarmPalette.gradient, startPoint: .topLeading, endPoint: .bottomTrailing))
+                          : AnyShapeStyle(Color.green))
                     .frame(width: metrics.keySize, height: metrics.keySize)
+                    .shadow(color: warmTheme ? AppTheme.warm.accent.opacity(0.38) : .clear, radius: 16, x: 0, y: 8)
                     .overlay {
                         Image(systemName: "phone.fill")
                             .font(.system(size: metrics.callIconSize, weight: .semibold))
@@ -553,7 +555,7 @@ struct DialPadView: View {
             }
             .foregroundStyle(.primary)
             .frame(width: metrics.keySize, height: metrics.keySize)
-            .dialKeySurface()
+            .dialKeySurface(plain: warmTheme)
             .contentShape(Circle())
         }
         .buttonStyle(DialToneButtonStyle(digit: digit, enabled: !model.isMuted && !model.callLifecycleSnapshot.state.representsCall))
@@ -657,7 +659,7 @@ private struct DialPadCurrentAgentCard: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .phoneSurface(cornerRadius: 16)
         .overlay {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(Color.primary.opacity(0.07), lineWidth: 0.5)
@@ -972,7 +974,7 @@ struct RecentsView: View {
                     ForEach(records) { call in
                         HStack(alignment: .top, spacing: 14) {
                             Image(systemName: call.missed ? "phone.badge.xmark" : call.direction == "incoming" ? "phone.arrow.down.left" : "phone.arrow.up.right")
-                                .foregroundStyle(call.missed ? Color.red : Color.accentColor).frame(width: 30, height: 44)
+                                .foregroundStyle(call.missed ? AnyShapeStyle(Color.red) : AnyShapeStyle(.tint)).frame(width: 30, height: 44)
                             VStack(alignment: .leading, spacing: 6) {
                                 Text(call.missed ? "未接来电" : call.direction == "incoming" ? "呼入" : "呼出").font(.headline)
                                 Text(call.startedAt.formatted(date: .abbreviated, time: .standard)).foregroundStyle(.secondary)
@@ -1239,7 +1241,7 @@ struct MessagesView: View {
                                 .foregroundStyle(.white)
                                 .padding(.horizontal, 6)
                                 .frame(minWidth: 20, minHeight: 20)
-                                .background(Color(uiColor: .systemBlue), in: Capsule())
+                                .background(.tint, in: Capsule())
                                 .fixedSize()
                                 .accessibilityLabel(String(format: L10n.t("%d 条未读短信"), unreadCount))
                                 .accessibilityIdentifier("smsConversation.unread.\(sender)")
@@ -1377,7 +1379,7 @@ struct MessageThreadView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Color(uiColor: .systemBackground))
+        .background(Color(uiColor: SMSThemeColors.background))
         .onChange(of: photoItem) { item in
             guard let item else { return }
             Task { pickedImage = try? await item.loadTransferable(type: Data.self) }
@@ -1400,7 +1402,7 @@ struct MessageThreadView: View {
                         .font(.system(size: 15, weight: .bold))
                         .foregroundStyle(.white)
                         .frame(width: 30, height: 30)
-                        .background(Circle().fill(Color.accentColor))
+                        .background(Circle().fill(.tint))
                         .frame(width: 44, height: 44)
                         .contentShape(Rectangle())
                 }
@@ -1790,7 +1792,7 @@ private struct MessageComposer: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .background(Color(uiColor: .systemBackground))
+        .background(Color(uiColor: SMSThemeColors.background))
     }
 
     private func sendNow() {
@@ -2015,8 +2017,10 @@ private extension View {
     }
 
     @ViewBuilder
-    func dialKeySurface() -> some View {
-        if #available(iOS 26.0, *) {
+    func dialKeySurface(plain: Bool = false) -> some View {
+        if plain {
+            self
+        } else if #available(iOS 26.0, *) {
             glassEffect(.regular.interactive(), in: Circle())
         } else {
             background(Color(uiColor: .tertiarySystemFill), in: Circle())
@@ -2095,6 +2099,7 @@ struct InitialAvatar: View {
     var photoData: Data? = nil
     var fallbackContent: AvatarFallbackContent? = nil
     var size: CGFloat = 44
+    @AppStorage(AppTheme.storageKey) private var themeRaw = AppTheme.sky.rawValue
 
     private var resolvedFallback: AvatarFallbackContent {
         fallbackContent
@@ -2105,12 +2110,31 @@ struct InitialAvatar: View {
         Group {
             if let photoData, let image = UIImage(data: photoData) {
                 Image(uiImage: image).resizable().scaledToFill()
+            } else if AppTheme(rawValue: themeRaw)?.restylesSurfaces == true {
+                warmFallback
             } else {
                 avatarFallback
             }
         }
         .frame(width: size, height: size)
         .clipShape(Circle())
+    }
+
+    private var warmFallback: some View {
+        Circle()
+            .fill(Color(uiColor: WarmPalette.soft))
+            .overlay {
+                switch resolvedFallback {
+                case .person:
+                    Image(systemName: "person.fill")
+                        .font(.system(size: size * 0.42, weight: .medium))
+                        .foregroundStyle(AppTheme.warm.accent)
+                case let .initial(initial):
+                    Text(initial)
+                        .font(.system(size: size * 0.4, weight: .semibold, design: .rounded))
+                        .foregroundStyle(AppTheme.warm.accent)
+                }
+            }
     }
 
     private var avatarFallback: some View {

@@ -64,12 +64,12 @@ final class SMSConversationTimelineController: UIViewController, UICollectionVie
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .systemBackground
+        view.backgroundColor = SMSThemeColors.background
         let layout = UICollectionViewFlowLayout()
         layout.minimumLineSpacing = 0
         layout.minimumInteritemSpacing = 0
         collection = UICollectionView(frame: .zero, collectionViewLayout: layout)
-        collection.backgroundColor = .systemBackground
+        collection.backgroundColor = SMSThemeColors.background
         collection.alwaysBounceVertical = true
         collection.keyboardDismissMode = .interactive
         collection.allowsSelection = false
@@ -128,6 +128,8 @@ final class SMSConversationTimelineController: UIViewController, UICollectionVie
         let old = presentation
         presentation = value
         guard isViewLoaded else { return }
+        view.backgroundColor = SMSThemeColors.background
+        collection.backgroundColor = SMSThemeColors.background
         let contentChanged = old.messages != value.messages
         let localeChanged = old.locale != value.locale
         let selectionChanged = old.selection != value.selection
@@ -563,6 +565,7 @@ private final class SMSConversationCell: UICollectionViewCell, UIEditMenuInterac
                                    .underlineStyle: NSUnderlineStyle.single.rawValue]
         bubble.outgoing = outgoing
         bubble.hasTail = item.showsTail
+        bubble.refreshColors()
         dateLabel.text = date
         dateLabel.isHidden = !item.showsTimestamp
         var details: [String] = []
@@ -811,12 +814,16 @@ private final class SMSBubbleView: UIView {
         return path
     }
 
+    /// Picks up a theme change on reuse (the theme lives in UserDefaults, outside UIKit).
+    func refreshColors() { needsPath = true; setNeedsLayout() }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         if needsPath || shape.frame != bounds {
             shape.frame = bounds
             shape.path = bubblePath().cgPath
-            shape.fillColor = (outgoing ? UIColor.systemGreen : UIColor.systemGray5).resolvedColor(with: traitCollection).cgColor
+            shape.fillColor = (outgoing ? SMSThemeColors.outgoingBubble : SMSThemeColors.incomingBubble)
+                .resolvedColor(with: traitCollection).cgColor
             needsPath = false
         }
     }
@@ -985,4 +992,12 @@ final class SMSAttachmentView: UIView {
     }
 
     override func accessibilityActivate() -> Bool { tapped(); return true }
+}
+
+
+/// SMS timeline colors per theme: green/gray system bubbles, or orange/beige under 暖橙.
+enum SMSThemeColors {
+    static var background: UIColor { AppTheme.current.restylesSurfaces ? WarmPalette.background : .systemBackground }
+    static var outgoingBubble: UIColor { AppTheme.current.restylesSurfaces ? AppTheme.warm.uiAccent : .systemGreen }
+    static var incomingBubble: UIColor { AppTheme.current.restylesSurfaces ? WarmPalette.soft : .systemGray5 }
 }

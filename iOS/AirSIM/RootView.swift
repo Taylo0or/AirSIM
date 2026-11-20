@@ -165,6 +165,7 @@ struct RootView: View {
                 .phoneTabBarAlwaysExpanded()
                 .phoneTabSelectionFeedback(selectedTabRawValue)
                 .tint(settings.theme.accent)
+                .fontDesign(settings.theme.restylesSurfaces ? .rounded : .default)
 
             if let call = presentedCall {
                 ActiveCallView(call: call)
@@ -388,13 +389,16 @@ struct RootView: View {
     }
 }
 
-/// 浅色模式使用系统电话式纯白底；深色模式才绘制深蓝黑底部环境光。
+/// 浅色模式使用系统电话式纯白底；深色模式才绘制深蓝黑底部环境光。暖橙主题用米白 / 暖炭底。
 struct PhoneBackdrop: View {
     @Environment(\.colorScheme) private var colorScheme
+    @AppStorage(AppTheme.storageKey) private var themeRaw = AppTheme.sky.rawValue
 
     var body: some View {
         ZStack {
-            if colorScheme == .dark {
+            if AppTheme(rawValue: themeRaw)?.restylesSurfaces == true {
+                Color(uiColor: WarmPalette.background)
+            } else if colorScheme == .dark {
                 Color(red: 0.008, green: 0.016, blue: 0.035)
                 LinearGradient(
                     colors: [
@@ -415,10 +419,80 @@ struct PhoneBackdrop: View {
 
 /// 内容卡片使用系统分组背景，保证深浅色和主题下的可读性。
 struct PhoneCard: ViewModifier {
+    @AppStorage(AppTheme.storageKey) private var themeRaw = AppTheme.sky.rawValue
+
+    @ViewBuilder
     func body(content: Content) -> some View {
-        content.padding(18).frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        let padded = content.padding(18).frame(maxWidth: .infinity, alignment: .leading)
+        if AppTheme(rawValue: themeRaw)?.restylesSurfaces == true {
+            padded.modifier(WarmCardSurface(cornerRadius: 24))
+        } else {
+            padded.background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        }
     }
+}
+
+/// 暖橙主题的配色：米白底、白卡片 + 细边框、米色圆形底、橙色渐变（深色模式为暖炭色系）。
+enum WarmPalette {
+    private static func rgb(_ hex: UInt32, _ alpha: CGFloat = 1) -> UIColor {
+        UIColor(red: CGFloat((hex >> 16) & 0xff) / 255, green: CGFloat((hex >> 8) & 0xff) / 255,
+                blue: CGFloat(hex & 0xff) / 255, alpha: alpha)
+    }
+    private static func dynamic(_ light: UIColor, _ dark: UIColor) -> UIColor {
+        UIColor { $0.userInterfaceStyle == .dark ? dark : light }
+    }
+    static let background = dynamic(rgb(0xF6F3EE), rgb(0x15120F))
+    static let card = dynamic(.white, rgb(0x221E1A))
+    static let cardBorder = dynamic(rgb(0xECE5DB), UIColor(white: 1, alpha: 0.07))
+    /// Avatar / icon circles and the incoming SMS bubble.
+    static let soft = dynamic(rgb(0xF1EBE3), rgb(0x2E2924))
+    static let accentSoft = dynamic(rgb(0xFDEBDC), rgb(0x3B2618))
+    static let gradient = [Color(uiColor: rgb(0xF4A055)), Color(uiColor: rgb(0xEC6A24))]
+}
+
+struct WarmCardSurface: ViewModifier {
+    let cornerRadius: CGFloat
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        content
+            .background(Color(uiColor: WarmPalette.card), in: shape)
+            .overlay(shape.strokeBorder(Color(uiColor: WarmPalette.cardBorder), lineWidth: 1))
+            .shadow(color: .black.opacity(0.045), radius: 12, x: 0, y: 4)
+    }
+}
+
+/// Small floating panels: system thin material, or a warm card under 暖橙.
+struct PhoneSurface: ViewModifier {
+    let cornerRadius: CGFloat
+    @AppStorage(AppTheme.storageKey) private var themeRaw = AppTheme.sky.rawValue
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if AppTheme(rawValue: themeRaw)?.restylesSurfaces == true {
+            content.modifier(WarmCardSurface(cornerRadius: cornerRadius))
+        } else {
+            content.background(.thinMaterial, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        }
+    }
+}
+
+/// Grouped forms keep the cream backdrop under 暖橙 instead of the cool system gray.
+struct PhoneListBackground: ViewModifier {
+    @AppStorage(AppTheme.storageKey) private var themeRaw = AppTheme.sky.rawValue
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if AppTheme(rawValue: themeRaw)?.restylesSurfaces == true {
+            content.scrollContentBackground(.hidden).background(PhoneBackdrop())
+        } else {
+            content
+        }
+    }
+}
+
+extension View {
+    func phoneSurface(cornerRadius: CGFloat = 16) -> some View { modifier(PhoneSurface(cornerRadius: cornerRadius)) }
+    func phoneListBackground() -> some View { modifier(PhoneListBackground()) }
 }
 
 struct PhoneGlassSurface: ViewModifier {
