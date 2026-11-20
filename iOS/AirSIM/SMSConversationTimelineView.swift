@@ -1,3 +1,4 @@
+import QuickLook
 import SwiftUI
 import UIKit
 
@@ -287,7 +288,18 @@ final class SMSConversationTimelineController: UIViewController, UICollectionVie
         cell.onToggle = { [weak self] in self?.presentation.onToggleSelection(item.id) }
         cell.onResend = item.message.canResend
             ? { [weak self] in self?.presentation.onResend?(item.message) } : nil
+        cell.onOpenAttachment = { [weak self] url in self?.previewAttachment(url) }
         return cell
+    }
+
+    private var quickLookSource: SMSQuickLookSource?
+
+    private func previewAttachment(_ url: URL) {
+        let source = SMSQuickLookSource(url: url)
+        quickLookSource = source
+        let preview = QLPreviewController()
+        preview.dataSource = source
+        present(preview, animated: true)
     }
 
     func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout,
@@ -445,6 +457,7 @@ private final class SMSConversationCell: UICollectionViewCell, UIEditMenuInterac
     private(set) var messageID: String?
     let bubble = SMSBubbleView()
     private let body = SMSReadOnlyTextView()
+    private let attachmentViews = (0..<3).map { _ in SMSAttachmentView() }
     private let dateLabel = UILabel()
     private let detailLabel = UILabel()
     private let check = UIImageView()
@@ -462,12 +475,17 @@ private final class SMSConversationCell: UICollectionViewCell, UIEditMenuInterac
     var onMore: (() -> Void)?
     var onResend: (() -> Void)?
     var onToggle: (() -> Void)?
+    var onOpenAttachment: ((URL) -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         contentView.addSubview(dateLabel)
         contentView.addSubview(bubble)
         bubble.addSubview(body)
+        for view in attachmentViews {
+            bubble.addSubview(view)
+            view.onOpen = { [weak self] url in self?.onOpenAttachment?(url) }
+        }
         contentView.addSubview(detailLabel)
         contentView.addSubview(check)
         dateLabel.font = UIFont.preferredFont(forTextStyle: .caption1)
@@ -509,6 +527,8 @@ private final class SMSConversationCell: UICollectionViewCell, UIEditMenuInterac
         onMore = nil
         onResend = nil
         onToggle = nil
+        onOpenAttachment = nil
+        attachmentViews.forEach { $0.reset() }
     }
 
     func configure(_ item: SMSTimelineItem, date: String?, locale: Locale, isSelecting: Bool, selected: Bool) {
@@ -518,14 +538,24 @@ private final class SMSConversationCell: UICollectionViewCell, UIEditMenuInterac
         messageID = item.id
         body.attributedText = nil
         body.font = UIFont.preferredFont(forTextStyle: .body)
-        body.text = item.message.content
+        body.text = item.message.bubbleText
+        body.isHidden = item.message.bubbleText.isEmpty
         body.textAlignment = .natural
         body.accessibilityLanguage = locale.identifier
         let outgoing = item.message.isOutgoing
         body.accessibilityHint = outgoing ? item.message.outgoingStatusLabel : nil
         body.textColor = outgoing ? .white : .label
         highlightedCode = nil
-        if let highlighted = SMSCodeHighlight.renderedBody(in: item.message.content, outgoing: outgoing) {
+        let attachments = Array((item.message.attachments ?? []).prefix(attachmentViews.count))
+        for (index, view) in attachmentViews.enumerated() {
+            if index < attachments.count {
+                view.isHidden = false
+                view.configure(attachments[index], key: "\(item.id)#\(index)", outgoing: outgoing)
+            } else {
+                view.isHidden = true
+            }
+        }
+        if let highlighted = SMSCodeHighlight.renderedBody(in: item.message.bubbleText, outgoing: outgoing) {
             body.attributedText = highlighted.text
             highlightedCode = highlighted.code
         }
@@ -625,13 +655,22 @@ private final class SMSConversationCell: UICollectionViewCell, UIEditMenuInterac
         return true
     }
 
-    private static func bubbleWidth(for text: String, width: CGFloat, selecting: Bool) -> CGFloat {
+    private static func bubbleWidth(for message: SMSMessage, width: CGFloat, selecting: Bool) -> CGFloat {
         let maximum = max(40, min(width * 0.80, width - (selecting ? 72 : 40)))
         let font = UIFont.preferredFont(forTextStyle: .body)
-        let rect = (text as NSString).boundingRect(with: CGSize(width: maximum - 28, height: .greatestFiniteMagnitude),
+        let rect = (message.bubbleText as NSString).boundingRect(with: CGSize(width: maximum - 28, height: .greatestFiniteMagnitude),
                                                   options: [.usesLineFragmentOrigin, .usesFontLeading],
                                                   attributes: [.font: font], context: nil)
-        return min(maximum, max(44, ceil(rect.width) + 28))
+        let textWidth = message.bubbleText.isEmpty ? 0 : ceil(rect.width) + 28
+        let mediaWidth: CGFloat = message.hasAttachments ? 240 : 0
+        return min(maximum, max(44, textWidth, mediaWidth))
+    }
+
+    /// Height of the attachment stack at the top of the bubble (0 without attachments).
+    private static func attachmentsHeight(for message: SMSMessage) -> CGFloat {
+        let views = (message.attachments ?? []).prefix(3)
+        guard !views.isEmpty else { return 0 }
+        return views.reduce(0) { $0 + SMSAttachmentView.height(for: $1) } + CGFloat(views.count + 1) * 4
     }
 
     private static func dateHeight(for date: String?, width: CGFloat) -> CGFloat {
@@ -643,14 +682,17 @@ private final class SMSConversationCell: UICollectionViewCell, UIEditMenuInterac
     }
 
     static func height(for item: SMSTimelineItem, date: String?, width: CGFloat, selecting: Bool) -> CGFloat {
-        let bubbleWidth = Self.bubbleWidth(for: item.message.content, width: width, selecting: selecting)
+        let bubbleWidth = Self.bubbleWidth(for: item.message, width: width, selecting: selecting)
         let font = UIFont.preferredFont(forTextStyle: .body)
-        let rect = (item.message.content as NSString).boundingRect(with: CGSize(width: bubbleWidth - 28, height: .greatestFiniteMagnitude),
+        let text = item.message.bubbleText
+        let rect = (text as NSString).boundingRect(with: CGSize(width: bubbleWidth - 28, height: .greatestFiniteMagnitude),
                                                                   options: [.usesLineFragmentOrigin, .usesFontLeading],
                                                                   attributes: [.font: font], context: nil)
         let dateHeight = Self.dateHeight(for: date, width: width)
         let detailHeight: CGFloat = ceil(UIFont.preferredFont(forTextStyle: .caption2).lineHeight) + 5
-        return dateHeight + max(font.lineHeight, ceil(rect.height)) + 20 + detailHeight + (item.showsTail ? 10 : 3)
+        let media = Self.attachmentsHeight(for: item.message)
+        let textHeight: CGFloat = text.isEmpty ? 0 : max(font.lineHeight, ceil(rect.height)) + 20
+        return dateHeight + media + textHeight + detailHeight + (item.showsTail ? 10 : 3)
     }
 
     override func layoutSubviews() {
@@ -660,7 +702,7 @@ private final class SMSConversationCell: UICollectionViewCell, UIEditMenuInterac
         if measuredWidth != width || measuredSelecting != selecting {
             measuredWidth = width
             measuredSelecting = selecting
-            measuredBubbleWidth = Self.bubbleWidth(for: item.message.content, width: width, selecting: selecting)
+            measuredBubbleWidth = Self.bubbleWidth(for: item.message, width: width, selecting: selecting)
             measuredDateHeight = Self.dateHeight(for: dateLabel.text, width: width)
         }
         let dateHeight = measuredDateHeight
@@ -672,7 +714,16 @@ private final class SMSConversationCell: UICollectionViewCell, UIEditMenuInterac
         let left: CGFloat = selecting ? 48 : 16
         let x = item.message.isOutgoing ? max(left, width - 16 - bubbleWidth) : left
         bubble.frame = CGRect(x: x, y: dateHeight, width: bubbleWidth, height: bubbleHeight)
-        body.frame = bubble.bounds.insetBy(dx: 14, dy: 10)
+        var top: CGFloat = 0
+        if item.message.hasAttachments {
+            top = 4
+            for (index, attachment) in (item.message.attachments ?? []).prefix(attachmentViews.count).enumerated() {
+                let height = SMSAttachmentView.height(for: attachment)
+                attachmentViews[index].frame = CGRect(x: 4, y: top, width: bubbleWidth - 8, height: height)
+                top += height + 4
+            }
+        }
+        body.frame = CGRect(x: 14, y: top + 10, width: bubbleWidth - 28, height: max(0, bubbleHeight - top - 20))
         // Keep the receiving/sending line readable even for a one-character bubble.
         let detailWidth = max(0, width - left - 16)
         detailLabel.frame = CGRect(x: left, y: bubble.frame.maxY + 3, width: detailWidth, height: max(0, detailHeight - 3))
@@ -777,4 +828,161 @@ private final class SMSBubbleView: UIView {
             setNeedsLayout()
         }
     }
+}
+
+
+/// QuickLook source for one attachment (images, video, files) opened from a bubble.
+final class SMSQuickLookSource: NSObject, QLPreviewControllerDataSource {
+    private let url: URL
+    init(url: URL) { self.url = url }
+    func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
+    func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem { url as NSURL }
+}
+
+/// One MMS image / voicemail clip / other attachment inside an SMS bubble.
+final class SMSAttachmentView: UIView {
+    var onOpen: ((URL) -> Void)?
+    private let imageView = UIImageView()
+    private let spinner = UIActivityIndicatorView(style: .medium)
+    private let button = UIButton(type: .system)
+    private let titleLabel = UILabel()
+    private let progress = UIProgressView(progressViewStyle: .default)
+    private var attachment: SMSAttachment?
+    private var key = ""
+    private var outgoing = false
+    private var loadTask: Task<Void, Never>?
+    private var observer: NSObjectProtocol?
+
+    static func height(for attachment: SMSAttachment) -> CGFloat {
+        switch attachment.kind {
+        case .image: return 200
+        case .audio: return 52
+        case .video, .file: return 48
+        }
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        clipsToBounds = true
+        layer.cornerRadius = 14
+        layer.cornerCurve = .continuous
+        imageView.contentMode = .scaleAspectFill
+        imageView.clipsToBounds = true
+        imageView.backgroundColor = UIColor.secondarySystemFill
+        addSubview(imageView)
+        addSubview(spinner)
+        button.tintColor = .label
+        button.addTarget(self, action: #selector(tapped), for: .touchUpInside)
+        addSubview(button)
+        titleLabel.font = .preferredFont(forTextStyle: .subheadline)
+        titleLabel.adjustsFontForContentSizeCategory = true
+        addSubview(titleLabel)
+        addSubview(progress)
+        isAccessibilityElement = true
+        accessibilityTraits = .button
+        addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tapped)))
+        observer = NotificationCenter.default.addObserver(forName: SMSAudioPlayback.didChange, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.refreshPlayback() }
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
+
+    func reset() {
+        loadTask?.cancel()
+        loadTask = nil
+        attachment = nil
+        imageView.image = nil
+        spinner.stopAnimating()
+    }
+
+    func configure(_ attachment: SMSAttachment, key: String, outgoing: Bool) {
+        reset()
+        self.attachment = attachment
+        self.key = key
+        self.outgoing = outgoing
+        let tint: UIColor = outgoing ? .white : .label
+        imageView.isHidden = attachment.kind != .image
+        button.isHidden = attachment.kind == .image
+        titleLabel.isHidden = attachment.kind == .image
+        progress.isHidden = attachment.kind != .audio
+        button.tintColor = tint
+        titleLabel.textColor = tint
+        progress.progressTintColor = tint
+        progress.trackTintColor = tint.withAlphaComponent(0.25)
+        backgroundColor = attachment.kind == .image ? .clear : tint.withAlphaComponent(0.12)
+        switch attachment.kind {
+        case .image:
+            accessibilityLabel = L10n.t("图片")
+            if let cached = SMSMediaStore.cachedFile(for: attachment), let image = UIImage(contentsOfFile: cached.path) {
+                imageView.image = image
+            } else {
+                spinner.startAnimating()
+                loadTask = Task { [weak self] in
+                    let file = try? await SMSMediaStore.shared.file(for: attachment)
+                    let image = file.flatMap { UIImage(contentsOfFile: $0.path) }
+                    await MainActor.run {
+                        guard let self, !Task.isCancelled, self.attachment == attachment else { return }
+                        self.spinner.stopAnimating()
+                        self.imageView.image = image ?? UIImage(systemName: "photo.badge.exclamationmark")
+                    }
+                }
+            }
+        case .audio:
+            let length = attachment.durationLabel.map { " · \($0)" } ?? ""
+            titleLabel.text = L10n.t("语音留言") + length
+            accessibilityLabel = titleLabel.text
+            refreshPlayback()
+        case .video, .file:
+            button.setImage(UIImage(systemName: attachment.kind == .video ? "play.rectangle" : "paperclip"), for: .normal)
+            titleLabel.text = L10n.t(attachment.kind == .video ? "视频 · 点按打开" : "附件 · 点按打开")
+            accessibilityLabel = titleLabel.text
+        }
+        setNeedsLayout()
+    }
+
+    private func refreshPlayback() {
+        guard attachment?.kind == .audio else { return }
+        let playing = SMSAudioPlayback.shared.isPlaying(key)
+        button.setImage(UIImage(systemName: playing ? "pause.circle.fill" : "play.circle.fill",
+                                withConfiguration: UIImage.SymbolConfiguration(pointSize: 30)), for: .normal)
+        progress.progress = playing ? Float(SMSAudioPlayback.shared.progress) : 0
+        accessibilityValue = playing ? L10n.t("正在播放") : nil
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        imageView.frame = bounds
+        spinner.center = CGPoint(x: bounds.midX, y: bounds.midY)
+        button.frame = CGRect(x: 6, y: (bounds.height - 40) / 2, width: 40, height: 40)
+        let textX: CGFloat = 52
+        if attachment?.kind == .audio {
+            titleLabel.frame = CGRect(x: textX, y: 8, width: bounds.width - textX - 12, height: 20)
+            progress.frame = CGRect(x: textX, y: 34, width: bounds.width - textX - 14, height: 4)
+        } else {
+            titleLabel.frame = CGRect(x: textX, y: (bounds.height - 20) / 2, width: bounds.width - textX - 12, height: 20)
+        }
+    }
+
+    @objc private func tapped() {
+        guard let attachment else { return }
+        let key = self.key
+        let onOpen = self.onOpen
+        Task { @MainActor in
+            if attachment.kind == .audio && SMSAudioPlayback.shared.isPlaying(key) {
+                SMSAudioPlayback.shared.stop()
+                return
+            }
+            guard let file = try? await SMSMediaStore.shared.file(for: attachment) else { return }
+            if attachment.kind == .audio {
+                SMSAudioPlayback.shared.toggle(key: key, file: file)
+            } else {
+                onOpen?(file)
+            }
+        }
+    }
+
+    override func accessibilityActivate() -> Bool { tapped(); return true }
 }

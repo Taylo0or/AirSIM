@@ -445,6 +445,62 @@ enum SMSSendToken {
     }
 }
 
+/// MMS media or a voicemail recording on a voip.ms line. The bridge serves it from a signed
+/// https URL; `localFile` names the copy in `SMSMediaStore` (outgoing images, downloaded media).
+struct SMSAttachment: Codable, Equatable, Hashable, Sendable {
+    enum Kind: String, Codable, Sendable { case image, audio, video, file }
+    var kind: Kind
+    var url: String?
+    var mime: String?
+    /// Seconds (voicemail audio).
+    var duration: Double?
+    var size: Int?
+    var localFile: String?
+
+    init(kind: Kind, url: String? = nil, mime: String? = nil, duration: Double? = nil,
+         size: Int? = nil, localFile: String? = nil) {
+        self.kind = kind; self.url = url; self.mime = mime
+        self.duration = duration; self.size = size; self.localFile = localFile
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        kind = Kind(rawValue: (try? values.decode(String.self, forKey: .kind)) ?? "") ?? .file
+        url = try values.decodeIfPresent(String.self, forKey: .url)
+        mime = try values.decodeIfPresent(String.self, forKey: .mime)
+        duration = try values.decodeIfPresent(Double.self, forKey: .duration)
+        size = try values.decodeIfPresent(Int.self, forKey: .size)
+        localFile = try values.decodeIfPresent(String.self, forKey: .localFile)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case kind, url, mime, duration, size
+        case localFile = "local_file"
+    }
+
+    /// `attachments` of an `incoming_sms` push or sync item; only https URLs are accepted.
+    static func parse(_ value: Any?) -> [SMSAttachment] {
+        guard let items = value as? [Any] else { return [] }
+        return items.prefix(3).compactMap { item in
+            guard let fields = item as? [String: Any],
+                  let url = fields["url"] as? String, url.hasPrefix("https://"), url.count <= 600 else { return nil }
+            return SMSAttachment(
+                kind: Kind(rawValue: fields["kind"] as? String ?? "") ?? .file,
+                url: url,
+                mime: fields["mime"] as? String,
+                duration: (fields["duration"] as? NSNumber)?.doubleValue,
+                size: (fields["size"] as? NSNumber)?.intValue
+            )
+        }
+    }
+
+    var durationLabel: String? {
+        guard let duration, duration > 0 else { return nil }
+        let seconds = Int(duration.rounded())
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+}
+
 struct SMSMessage: Codable, Equatable, Sendable, Identifiable {
     let sender: String
     let content: String
@@ -463,8 +519,19 @@ struct SMSMessage: Codable, Equatable, Sendable, Identifiable {
     /// Opaque handle used to resync an in-flight send ("local|<uuid>" or
     /// "cloud|<command uuid>|<agent id>"). Cleared when the state is final.
     var sendToken: String? = nil
+    /// MMS media / voicemail audio (voip.ms lines).
+    var attachments: [SMSAttachment]? = nil
 
     var isOutgoing: Bool { direction == .outgoing }
+
+    var hasAttachments: Bool { attachments?.isEmpty == false }
+
+    /// Text shown in the bubble: the bridge's "[图片]" placeholder is dropped when the media itself is shown.
+    var bubbleText: String {
+        guard hasAttachments else { return content }
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.hasPrefix("[") && trimmed.hasSuffix("]") && !trimmed.contains("\n") ? "" : content
+    }
 
     var canResend: Bool { isOutgoing && (sendState == .failed || sendState == .unconfirmed) }
 
@@ -502,6 +569,7 @@ struct SMSMessage: Codable, Equatable, Sendable, Identifiable {
         case simSlot = "sim_slot"
         case sendState = "send_state"
         case sendToken = "send_token"
+        case attachments
     }
 }
 

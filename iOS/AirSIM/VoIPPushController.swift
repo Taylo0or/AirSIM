@@ -878,6 +878,8 @@ struct IncomingRemoteSMS: Equatable, Sendable {
     let timestamp: Date
     let contentTruncated: Bool
     let simSlot: String?
+    /// MMS media / voicemail audio (plaintext voip.ms pushes only).
+    let attachments: [SMSAttachment]
 
     /// End-to-end encrypted pushes (issue #24) are opened with the agent's stored key; a plaintext
     /// push from an agent that has a key is refused, since only a forger sends one.
@@ -915,6 +917,7 @@ struct IncomingRemoteSMS: Equatable, Sendable {
         } else {
             simSlot = Self.nonEmpty(userInfo["sim_slot"] as? String)
         }
+        attachments = decrypted == nil ? SMSAttachment.parse(userInfo["attachments"]) : []
     }
 
     private static func parseTimestamp(_ value: String) -> Date? {
@@ -936,7 +939,8 @@ struct IncomingRemoteSMS: Equatable, Sendable {
             deliveryID: deliveryID,
             direction: .incoming,
             sourceAgentID: agentID,
-            simSlot: simSlot
+            simSlot: simSlot,
+            attachments: attachments.isEmpty ? nil : attachments
         )
     }
 
@@ -1596,7 +1600,7 @@ final class VoIPPushController: NSObject {
     /// Queues the SMS on the relay. Once this returns, the module may send it even if
     /// the caller stops waiting, so later failures are ambiguous rather than final.
     func enqueueCloudSMS(to number: String, message: String, target: CloudCommandTarget,
-                         simAccount: String? = nil, commandID: UUID) async throws {
+                         simAccount: String? = nil, commandID: UUID, mediaIDs: [String] = []) async throws {
         guard let registration = currentRegistration() else { throw CloudCommandError.unavailable }
         let enqueue = try await enqueueCloudCommand(
             target: target, registration: registration,
@@ -1604,9 +1608,32 @@ final class VoIPPushController: NSObject {
             type: "send_sms",
             number: number,
             message: message,
-            simAccount: simAccount
+            simAccount: simAccount,
+            extra: mediaIDs.isEmpty ? [:] : ["media_ids": mediaIDs]
         )
         guard enqueue.accepted else { throw CloudCommandError.invalidResponse }
+    }
+
+    /// Uploads an MMS image to the voip.ms bridge behind the self-hosted Relay (same device
+    /// credentials as the Relay); returns the media id for `send_sms.media_ids` and its URL.
+    func uploadVoipmsMedia(_ data: Data, mime: String = "image/jpeg") async throws -> (id: String, url: String?) {
+        guard let registration = currentRegistration(),
+              let url = RelayEndpoint.url(base: registration.relayURL, path: "voipms/media") else {
+            throw CloudCommandError.unavailable
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 60
+        request.setValue(mime, forHTTPHeaderField: "Content-Type")
+        request.setValue(registration.deviceID, forHTTPHeaderField: "X-AirSIM-Device-ID")
+        request.setValue("Bearer \(registration.deviceSecret)", forHTTPHeaderField: "Authorization")
+        let (body, response) = try await URLSession.shared.upload(for: request, from: data)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        let fields = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
+        guard status == 200, let id = fields?["id"] as? String, !id.isEmpty else {
+            throw CloudCommandError.failed((fields?["error"] as? String) ?? "图片上传失败（HTTP \(status)）")
+        }
+        return (id, fields?["url"] as? String)
     }
 
     func awaitCloudSMS(commandID: UUID, target: CloudCommandTarget,

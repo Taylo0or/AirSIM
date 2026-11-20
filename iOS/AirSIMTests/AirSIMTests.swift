@@ -6214,3 +6214,35 @@ final class CloudSIMSelectionTests: XCTestCase {
         XCTAssertNil(agent.simSlots)
     }
 }
+
+final class SMSAttachmentTests: XCTestCase {
+    func testPushAttachmentsParseOnlyHTTPSAndKeepVoicemailDuration() throws {
+        let userInfo: [AnyHashable: Any] = [
+            "event": "incoming_sms", "delivery_id": "voipms-vm-1", "agent_id": "voipms-516897",
+            "sender": "+16045550100", "content": "语音留言 0:12", "sim_slot": "SIM 1",
+            "timestamp": "2026-11-20T20:00:00.000Z",
+            "attachments": [
+                ["kind": "audio", "mime": "audio/wav", "url": "https://relay.example/voipms/media/s/a.wav", "duration": 12.4],
+                ["kind": "image", "url": "http://insecure.example/x.jpg"],
+            ],
+        ]
+        let push = try IncomingRemoteSMS(userInfo: userInfo)
+        let message = push.message
+        XCTAssertEqual(message.attachments?.count, 1)
+        XCTAssertEqual(message.attachments?.first?.kind, .audio)
+        XCTAssertEqual(message.attachments?.first?.durationLabel, "0:12")
+        XCTAssertEqual(message.bubbleText, "语音留言 0:12")
+    }
+
+    func testImagePlaceholderIsHiddenAndHistoryRoundTrips() throws {
+        let message = SMSMessage(sender: "+16045550100", content: "[图片]", code: nil, timestamp: Date(timeIntervalSince1970: 1_800_000_000),
+                                 deliveryID: "voipms-mms-1", direction: .incoming, sourceAgentID: "voipms-516897", simSlot: "SIM 2",
+                                 attachments: [SMSAttachment(kind: .image, url: "https://relay.example/voipms/media/s/b.jpg", mime: "image/jpeg")])
+        XCTAssertEqual(message.bubbleText, "")
+        let decoded = try JSONDecoder().decode(SMSMessage.self, from: JSONEncoder().encode(message))
+        XCTAssertEqual(decoded, message)
+        let legacy = try JSONDecoder().decode(SMSMessage.self, from: Data(#"{"sender":"1","content":"hi","timestamp":0}"#.utf8))
+        XCTAssertNil(legacy.attachments)
+        XCTAssertEqual(legacy.bubbleText, "hi")
+    }
+}

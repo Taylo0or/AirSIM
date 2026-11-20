@@ -2,6 +2,7 @@ import SwiftUI
 import AVFoundation
 import UIKit
 import LinkPresentation
+import PhotosUI
 import UniformTypeIdentifiers
 
 enum DialPadPasteSanitizer {
@@ -1307,6 +1308,8 @@ struct MessageThreadView: View {
     @State private var showingDeleteConfirmation = false
     @State private var selection = SMSMessageSelection()
     @FocusState private var composerFocused: Bool
+    @State private var photoItem: PhotosPickerItem?
+    @State private var pickedImage: Data?
 
     private var dateLocale: Locale {
         let language = settings.language == .system ? L10n.effectiveLanguage : settings.language
@@ -1327,7 +1330,61 @@ struct MessageThreadView: View {
         reply.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// The line this conversation last used (e.g. a voip.ms number); replies go out on it.
+    private var conversationLine: String? {
+        messages.max { $0.timestamp < $1.timestamp }?.sourceAgentID
+    }
+
+    private var canSend: Bool { !trimmedReply.isEmpty || pickedImage != nil }
+
     private var replyBar: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let pickedImage, let image = UIImage(data: pickedImage) {
+                ZStack(alignment: .topTrailing) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 72, height: 72)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    Button {
+                        self.pickedImage = nil
+                        photoItem = nil
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 20))
+                            .symbolRenderingMode(.palette)
+                            .foregroundStyle(.white, .black.opacity(0.6))
+                    }
+                    .buttonStyle(.plain)
+                    .offset(x: 6, y: -6)
+                    .accessibilityLabel(L10n.t("移除图片"))
+                }
+                .padding(.leading, 56)
+            }
+            HStack(alignment: .bottom, spacing: 6) {
+                if model.agentSupportsMMS(conversationLine) {
+                    PhotosPicker(selection: $photoItem, matching: .images) {
+                        Image(systemName: "photo.on.rectangle.angled")
+                            .font(.system(size: 20))
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .accessibilityLabel(L10n.t("添加图片"))
+                    .accessibilityIdentifier("sms.photo")
+                }
+                messageField
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color(uiColor: .systemBackground))
+        .onChange(of: photoItem) { item in
+            guard let item else { return }
+            Task { pickedImage = try? await item.loadTransferable(type: Data.self) }
+        }
+    }
+
+    private var messageField: some View {
         HStack(alignment: .bottom, spacing: 6) {
             TextField(L10n.t("短信"), text: $reply, axis: .vertical)
                 .accessibilityIdentifier("sms.reply")
@@ -1335,9 +1392,9 @@ struct MessageThreadView: View {
                 .textFieldStyle(.plain)
                 .lineLimit(1...5)
                 .padding(.leading, 14)
-                .padding(.trailing, trimmedReply.isEmpty ? 14 : 2)
+                .padding(.trailing, canSend ? 2 : 14)
                 .padding(.vertical, 8)
-            if !trimmedReply.isEmpty {
+            if canSend {
                 Button(action: sendReply) {
                     Image(systemName: "arrow.up")
                         .font(.system(size: 15, weight: .bold))
@@ -1354,18 +1411,23 @@ struct MessageThreadView: View {
             }
         }
         .smsComposerGlass()
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Color(uiColor: .systemBackground))
     }
 
     private func sendReply() {
         let body = trimmedReply
-        guard !body.isEmpty else { return }
         // The bubble appears at once as "发送中…" and settles in the background.
         // Reply from the line this conversation last used (e.g. a voip.ms number), not
         // whichever device happens to be bound.
-        let line = messages.max { $0.timestamp < $1.timestamp }?.sourceAgentID
+        let line = conversationLine
+        if let image = pickedImage {
+            if model.enqueueMMS(to: sender, content: body, imageData: image, agentID: line) {
+                reply = ""
+                pickedImage = nil
+                photoItem = nil
+            }
+            return
+        }
+        guard !body.isEmpty else { return }
         if model.enqueueSMS(to: sender, content: body, agentID: line) { reply = "" }
     }
 

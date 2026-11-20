@@ -1,4 +1,8 @@
+import AVFoundation
+import CallKit
+import CryptoKit
 import Foundation
+import UIKit
 
 struct SMSMessageSelection: Equatable {
     private(set) var isSelecting = false
@@ -142,5 +146,141 @@ private final class SMSConversationTimestampFormatters: @unchecked Sendable {
             dayLabel = dateYear == currentYear ? monthDay.string(from: date) : fullDate.string(from: date)
         }
         return "\(dayLabel) \(time.string(from: date))"
+    }
+}
+
+// MARK: - MMS / voicemail media
+
+/// Local copies of SMS attachments: outgoing MMS images and downloaded MMS media / voicemail audio.
+actor SMSMediaStore {
+    static let shared = SMSMediaStore()
+    private var downloads: [String: Task<URL, Error>] = [:]
+
+    nonisolated static var directory: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let folder = base.appendingPathComponent("AirSIM-SMS-Media", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder
+    }
+
+    nonisolated static func localURL(_ name: String) -> URL {
+        directory.appendingPathComponent((name as NSString).lastPathComponent)
+    }
+
+    /// Stores picked image bytes; returns the file name kept in `SMSAttachment.localFile`.
+    nonisolated static func saveOutgoing(_ data: Data, fileExtension: String = "jpg") throws -> String {
+        let name = "out-\(UUID().uuidString.lowercased()).\(fileExtension)"
+        try data.write(to: localURL(name), options: .atomic)
+        return name
+    }
+
+    nonisolated static func cachedFile(for attachment: SMSAttachment) -> URL? {
+        if let name = attachment.localFile {
+            let url = localURL(name)
+            if FileManager.default.fileExists(atPath: url.path) { return url }
+        }
+        guard let remote = attachment.url else { return nil }
+        let url = localURL(cacheName(remote))
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    private nonisolated static func cacheName(_ remote: String) -> String {
+        let digest = SHA256.hash(data: Data(remote.utf8)).map { String(format: "%02x", $0) }.joined().prefix(32)
+        let ext = URL(string: remote).map { $0.pathExtension }.flatMap { $0.isEmpty ? nil : $0 } ?? "bin"
+        return "in-\(digest).\(ext)"
+    }
+
+    /// A local file for the attachment, downloading it once (concurrent callers share the request).
+    func file(for attachment: SMSAttachment) async throws -> URL {
+        if let cached = Self.cachedFile(for: attachment) { return cached }
+        guard let remote = attachment.url, let source = URL(string: remote), source.scheme == "https" else {
+            throw URLError(.badURL)
+        }
+        if let running = downloads[remote] { return try await running.value }
+        let task = Task<URL, Error> {
+            var request = URLRequest(url: source)
+            request.timeoutInterval = 60
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200, !data.isEmpty else { throw URLError(.badServerResponse) }
+            let target = Self.localURL(Self.cacheName(remote))
+            try data.write(to: target, options: .atomic)
+            return target
+        }
+        downloads[remote] = task
+        defer { downloads[remote] = nil }
+        return try await task.value
+    }
+}
+
+enum MMSImageEncoder {
+    /// voip.ms accepts MMS media up to ~1.2 MB: scale to ≤1600 px and lower JPEG quality until it fits.
+    static func jpeg(from data: Data, maxBytes: Int = 1_000_000) -> Data? {
+        guard let image = UIImage(data: data) else { return nil }
+        let longest = max(image.size.width, image.size.height)
+        let scale = min(1, 1600 / max(longest, 1))
+        let size = CGSize(width: (image.size.width * scale).rounded(), height: (image.size.height * scale).rounded())
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        let rendered = UIGraphicsImageRenderer(size: size, format: format).image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
+        var quality: CGFloat = 0.8
+        while quality > 0.2 {
+            if let encoded = rendered.jpegData(compressionQuality: quality), encoded.count <= maxBytes { return encoded }
+            quality -= 0.15
+        }
+        return rendered.jpegData(compressionQuality: 0.2)
+    }
+}
+
+/// Inline voicemail / audio playback for SMS bubbles (one clip at a time).
+@MainActor
+final class SMSAudioPlayback: NSObject, AVAudioPlayerDelegate {
+    static let shared = SMSAudioPlayback()
+    static let didChange = Notification.Name("airsim.sms-audio-playback.changed")
+    private var player: AVAudioPlayer?
+    private(set) var playingKey: String?
+    private var timer: Timer?
+
+    var progress: Double {
+        guard let player, player.duration > 0 else { return 0 }
+        return player.currentTime / player.duration
+    }
+
+    func isPlaying(_ key: String) -> Bool { playingKey == key && player?.isPlaying == true }
+
+    func toggle(key: String, file: URL) {
+        if isPlaying(key) { stop(); return }
+        stop()
+        do {
+            // Never take over the audio route of a call in progress.
+            guard CXCallObserver().calls.allSatisfy(\.hasEnded) else { return }
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .spokenAudio)
+            try session.setActive(true)
+            let player = try AVAudioPlayer(contentsOf: file)
+            player.delegate = self
+            player.play()
+            self.player = player
+            playingKey = key
+            timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { _ in
+                Task { @MainActor in NotificationCenter.default.post(name: Self.didChange, object: nil) }
+            }
+        } catch {
+            stop()
+        }
+        NotificationCenter.default.post(name: Self.didChange, object: nil)
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+        player?.stop()
+        player = nil
+        playingKey = nil
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        NotificationCenter.default.post(name: Self.didChange, object: nil)
+    }
+
+    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        Task { @MainActor in self.stop() }
     }
 }

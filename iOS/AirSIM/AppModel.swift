@@ -3567,6 +3567,8 @@ final class AppModel: ObservableObject {
         let commandID: UUID
         /// A conversation's own line; never silently swapped for the bound device.
         let explicitAgentID: String?
+        /// MMS image (file in `SMSMediaStore`); only voip.ms lines send MMS, through the cloud.
+        var mediaFile: String? = nil
     }
 
     /// Shows the SMS in the conversation at once ("发送中…") and delivers it in the
@@ -3580,6 +3582,24 @@ final class AppModel: ObservableObject {
         return true
     }
 
+    /// Sends a picked photo (optionally with text) as an MMS on a voip.ms line.
+    @discardableResult
+    func enqueueMMS(to phone: String, content: String, imageData: Data, agentID: String?) -> Bool {
+        guard let agentID, agentSupportsMMS(agentID),
+              let jpeg = MMSImageEncoder.jpeg(from: imageData),
+              let file = try? SMSMediaStore.saveOutgoing(jpeg) else { return false }
+        guard let pending = beginPendingSMS(to: phone, content: content, agentID: agentID, mediaFile: file) else { return false }
+        Task { _ = await deliverPendingSMS(pending) }
+        return true
+    }
+
+    /// voip.ms bridge Agents (agent_kind "voipms") can send MMS.
+    func agentSupportsMMS(_ agentID: String?) -> Bool {
+        guard let agentID, !agentID.isEmpty else { return false }
+        if pairedAndroidAgents.first(where: { $0.id == agentID })?.agentKind == "voipms" { return true }
+        return agentID.hasPrefix("voipms-")
+    }
+
     func sendSMS(to phone: String, content: String) async -> Bool {
         guard let pending = beginPendingSMS(to: phone, content: content) else { return false }
         return await deliverPendingSMS(pending)
@@ -3590,14 +3610,20 @@ final class AppModel: ObservableObject {
         guard message.isOutgoing, message.sendState == .failed || message.sendState == .unconfirmed else { return }
         historyStore.deleteMessages(ids: [message.id], from: messages)
         if let latest = historyStore.messageSnapshot() { messages = normalizedMessages(latest) }
+        if let image = message.attachments?.first(where: { $0.kind == .image }),
+           let file = SMSMediaStore.cachedFile(for: image), let data = try? Data(contentsOf: file) {
+            enqueueMMS(to: message.sender, content: message.bubbleText, imageData: data, agentID: message.sourceAgentID)
+            return
+        }
         enqueueSMS(to: message.sender, content: message.content, agentID: message.sourceAgentID)
     }
 
-    private func beginPendingSMS(to phone: String, content: String, agentID: String? = nil) -> PendingSMS? {
+    private func beginPendingSMS(to phone: String, content: String, agentID: String? = nil,
+                                 mediaFile: String? = nil) -> PendingSMS? {
         let boundAtStart = agentID ?? boundAgentID
         let target = Self.validatedNumber(phone)
         let body = content.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !target.isEmpty, !body.isEmpty, body.count <= 2_000 else { return nil }
+        guard !target.isEmpty, !body.isEmpty || mediaFile != nil, body.count <= 2_000 else { return nil }
         let smsAgentID = boundAtStart ?? currentAndroidAgent?.id
         let smsSlot = smsAgentID.flatMap { selectedSMSSlotID(for: $0, recipient: target) }
         let slotLabel = smsAgentID.flatMap { id in smsSIMSlots(for: id).first { $0.id == smsSlot }.map { slot in
@@ -3608,13 +3634,15 @@ final class AppModel: ObservableObject {
         // the pending copy and its settled replacement share one identity.
         let sentAt = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down))
         let record = SMSMessage(
-            sender: target, content: body, code: nil, timestamp: sentAt, deliveryID: nil,
+            sender: target, content: body.isEmpty && mediaFile != nil ? "[图片]" : body, code: nil,
+            timestamp: sentAt, deliveryID: nil,
             direction: .outgoing, sourceAgentID: smsAgentID, simSlot: slotLabel,
-            sendState: .sending, sendToken: "local|\(commandID.uuidString.lowercased())"
+            sendState: .sending, sendToken: "local|\(commandID.uuidString.lowercased())",
+            attachments: mediaFile.map { [SMSAttachment(kind: .image, mime: "image/jpeg", localFile: $0)] }
         )
         let pending = PendingSMS(record: record, target: target, body: body, boundAtStart: boundAtStart,
                                  smsAgentID: smsAgentID, smsSlot: smsSlot, commandID: commandID,
-                                 explicitAgentID: agentID)
+                                 explicitAgentID: agentID, mediaFile: mediaFile)
         inFlightSMSTokens.insert(record.sendToken!)
         storeOutgoingSMS(record)
         return pending
@@ -3690,6 +3718,9 @@ final class AppModel: ObservableObject {
                 )
             }
             let result: SMSSendResult
+            if pending.mediaFile != nil, localReachable || voBLEReady || !CloudModePreference.isEnabled() {
+                throw CloudCommandError.failed("彩信只能通过云端的 voip.ms 线路发送")
+            }
             if localReachable {
                 result = try await localAPI!.sendSMS(to: target, message: body, simAccount: smsSlot)
             } else if voBLEReady {
@@ -3720,9 +3751,20 @@ final class AppModel: ObservableObject {
                 inFlightSMSTokens.insert(cloudToken)
                 defer { inFlightSMSTokens.remove(cloudToken) }
                 storeOutgoingSMS(pending.record)
+                var mediaIDs: [String] = []
+                if let mediaFile = pending.mediaFile {
+                    let data = try Data(contentsOf: SMSMediaStore.localURL(mediaFile))
+                    let uploaded = try await VoIPPushController.shared.uploadVoipmsMedia(data)
+                    mediaIDs = [uploaded.id]
+                    if let url = uploaded.url, var attachments = pending.record.attachments, !attachments.isEmpty {
+                        attachments[0].url = url
+                        pending.record.attachments = attachments
+                        storeOutgoingSMS(pending.record)
+                    }
+                }
                 try await VoIPPushController.shared.enqueueCloudSMS(
                     to: target, message: body, target: route, simAccount: smsSlot,
-                    commandID: pending.commandID)
+                    commandID: pending.commandID, mediaIDs: mediaIDs)
                 enqueuedToCloud = true
                 result = try await VoIPPushController.shared.awaitCloudSMS(
                     commandID: pending.commandID, target: route)
