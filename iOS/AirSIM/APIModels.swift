@@ -189,6 +189,28 @@ struct CloudAgentStatus: Decodable, Equatable, Sendable {
 
 /// One call-capable SIM/PhoneAccount reported by the paired Android.
 /// The identifier is an opaque Telecom handle; the number is display-only.
+/// One conversation per subscriber: "+16045550100" (voip.ms) and "6045550100" (typed),
+/// or "+8613800000000" and "13800000000", are the same thread. Only an explicit
+/// international prefix is removed; a bare 11-digit number starting with 1 may be a
+/// mainland mobile, so it is never treated as NANP.
+enum SMSConversationKey {
+    static func key(for sender: String) -> String {
+        let trimmed = sender.trimmingCharacters(in: .whitespacesAndNewlines)
+        var digits = trimmed.filter(\.isNumber)
+        guard digits.count >= 7, trimmed.allSatisfy({ $0.isNumber || " +-().".contains($0) }) else {
+            return trimmed // short codes, alphanumeric senders
+        }
+        let international = trimmed.hasPrefix("+") || digits.hasPrefix("00")
+        if digits.hasPrefix("00") { digits.removeFirst(2) }
+        guard international else { return digits }
+        if digits.hasPrefix("1"), digits.count == 11 { return String(digits.dropFirst()) }
+        if digits.hasPrefix("86"), digits.count == 13 { return String(digits.dropFirst(2)) }
+        return digits
+    }
+
+    static func same(_ left: String, _ right: String) -> Bool { key(for: left) == key(for: right) }
+}
+
 /// Shows a receiving line ("SIM 1") as its phone number when the Agent reports one.
 /// Only this small slot → number map is kept, for display; slot handles stay number-free.
 enum SIMLineDisplay {
@@ -1491,7 +1513,8 @@ enum SMSSIMPreference {
     static func key(_ agentID: String) -> String { "airsim.sms-sim-account.\(agentID)" }
     private static func conversationsKey(_ agentID: String) -> String { "airsim.sms-conversation-lines.\(agentID)" }
     private static func recipientKey(_ recipient: String) -> String {
-        let normalized = recipient.filter { !$0.isWhitespace && !"()-".contains($0) }
+        // Same subscriber with or without a country code shares one remembered line.
+        let normalized = SMSConversationKey.key(for: recipient)
         return SHA256.hash(data: Data(normalized.utf8)).map { String(format: "%02x", $0) }.joined()
     }
     static func select(_ id: String, agentID: String, recipient: String?, defaults: UserDefaults = .standard) {

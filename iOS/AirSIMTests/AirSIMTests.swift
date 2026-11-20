@@ -3288,6 +3288,19 @@ final class AirSIMTests: XCTestCase {
         XCTAssertNotNil(records[0].endedAt)
     }
 
+    func testConversationKeyMergesCountryCodeFormsOnly() {
+        let same: [(String, String)] = [
+            ("+16045550100", "6045550100"), ("+1 (604) 555-0100", "604-555-0100"),
+            ("+8613800000000", "13800000000"), ("008613800000000", "138 0000 0000"),
+        ]
+        for (left, right) in same { XCTAssertTrue(SMSConversationKey.same(left, right), "\(left) vs \(right)") }
+        // A bare 11-digit number starting with 1 is a mainland mobile, not +1.
+        XCTAssertFalse(SMSConversationKey.same("13800000000", "3800000000"))
+        XCTAssertFalse(SMSConversationKey.same("+16045550100", "+16045550101"))
+        XCTAssertEqual(SMSConversationKey.key(for: "10086"), "10086")
+        XCTAssertEqual(SMSConversationKey.key(for: "AirSIM"), "AirSIM")
+    }
+
     func testSIMLineDisplayShowsReportedNumberPerSlot() throws {
         let suite = "airsim.sim-line-test.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))

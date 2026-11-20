@@ -1372,7 +1372,8 @@ final class AppModel: ObservableObject {
     func selectedSMSSlotID(for agentID: String, recipient: String? = nil) -> String? {
         let slots = smsSIMSlots(for: agentID)
         let lastLine = recipient.flatMap { recipient in
-            messages.filter { $0.sourceAgentID == agentID && $0.sender == recipient && $0.simSlot?.isEmpty == false }
+            messages.filter { $0.sourceAgentID == agentID && SMSConversationKey.same($0.sender, recipient)
+                && $0.simSlot?.isEmpty == false }
                 .max { $0.timestamp < $1.timestamp }?.simSlot
         }
         let suggested = slots.first { slot in

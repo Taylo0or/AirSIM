@@ -1048,7 +1048,8 @@ struct SMSConversationListToolbar: ToolbarContent {
         if state.editMode.isEditing {
             management.append(UIAction(title: L10n.t("删除所选会话"), image: UIImage(systemName: "trash"),
                 attributes: state.selectedConversations.isEmpty ? [.destructive, .disabled] : [.destructive]) { _ in
-                state.requestDelete(Set(model.messages.filter { state.selectedConversations.contains($0.sender) }.map(\.id)))
+                let selected = Set(state.selectedConversations.map(SMSConversationKey.key(for:)))
+                state.requestDelete(Set(model.messages.filter { selected.contains(SMSConversationKey.key(for: $0.sender)) }.map(\.id)))
             })
         }
         management.append(UIAction(title: L10n.t("清空全部短信"), image: UIImage(systemName: "trash"),
@@ -1087,8 +1088,13 @@ struct MessagesView: View {
     let openConversation: (String) -> Void
 
     private var conversations: [(sender: String, messages: [SMSMessage])] {
-        Dictionary(grouping: model.messages, by: \.sender)
-            .map { ($0.key, $0.value.sorted { $0.timestamp < $1.timestamp }) }
+        Dictionary(grouping: model.messages) { SMSConversationKey.key(for: $0.sender) }
+            .map { _, group in
+                let sorted = group.sorted { $0.timestamp < $1.timestamp }
+                // Show the form the other party actually sends from (e.g. +1…), else the latest.
+                let shown = sorted.last { !$0.isOutgoing }?.sender ?? sorted.last?.sender ?? ""
+                return (shown, sorted)
+            }
             .filter { sender, messages in
                 PhoneContentSearch.smsMatches(sender: sender, contactName: contacts.contact(for: sender)?.name,
                     messages: messages, query: state.searchText)
@@ -1312,7 +1318,7 @@ struct MessageThreadView: View {
 
     private var messages: [SMSMessage] {
         model.messages
-            .filter { $0.sender == sender }
+            .filter { SMSConversationKey.same($0.sender, sender) }
             .sorted { $0.timestamp < $1.timestamp }
     }
 
