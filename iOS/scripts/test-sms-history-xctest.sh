@@ -18,7 +18,12 @@ let package = Package(name: "HistoryCore", platforms: [.macOS(.v13)],
 source = (root/'AirSIM/APIModels.swift').read_text()
 models = source[source.index('struct CallRecord:'):source.index('struct CallStatus:')]
 models += source[source.index('enum SMSDirection:'):source.index('struct SMSStatus:')]
-(out/'Sources/HistoryCore/Models.swift').write_text('import Foundation\nimport CryptoKit\n'+models)
+# App-only helpers the extracted models call; identity stubs keep this smoke test standalone.
+stubs = '''
+enum L10n { static func t(_ key: String) -> String { key } }
+enum SIMLineDisplay { static func name(agentID: String?, line: String) -> String { line } }
+'''
+(out/'Sources/HistoryCore/Models.swift').write_text('import Foundation\nimport CryptoKit\n'+models+stubs)
 (out/'Sources/HistoryCore/LocalHistoryStore.swift').write_text((root/'AirSIM/LocalHistoryStore.swift').read_text())
 tests=(root/'AirSIMTests/AirSIMTests.swift').read_text()
 tests=tests[tests.index('final class HistoryAttentionTests:'):tests.index('private final class LocalPairingHTTPProbe:')]
