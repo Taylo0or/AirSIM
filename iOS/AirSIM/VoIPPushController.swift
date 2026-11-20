@@ -1626,13 +1626,14 @@ final class VoIPPushController: NSObject {
         let more: Bool
     }
 
-    /// Asks the Agent, through the Relay command channel, for retained SMS after a cursor.
-    func syncCloudSMS(since: String?, target: CloudCommandTarget, timeout: TimeInterval = 25) async throws -> CloudSMSSyncPage {
+    /// Runs one Agent sync command through the Relay and returns its raw result object.
+    private func runAgentSyncCommand(type: String, extra: [String: Any], target: CloudCommandTarget,
+                                     timeout: TimeInterval, failure: String) async throws -> [String: Any] {
         guard let registration = currentRegistration() else { throw CloudCommandError.unavailable }
         let commandID = UUID()
         let enqueue = try await enqueueCloudCommand(
-            target: target, registration: registration, commandID: commandID, type: "sms_sync",
-            number: "", message: nil, extra: since.map { ["since": $0] } ?? [:]
+            target: target, registration: registration, commandID: commandID, type: type,
+            number: "", message: nil, extra: extra
         )
         guard enqueue.accepted else { throw CloudCommandError.invalidResponse }
         guard let url = RelayEndpoint.url(base: registration.relayURL, path: "v2/commands/result") else {
@@ -1649,10 +1650,30 @@ final class VoIPPushController: NSObject {
             }
             return object
         }, isTerminal: { ["completed", "failed", "expired"].contains($0["status"] as? String ?? "") })
-        guard response["status"] as? String == "completed",
-              let result = response["result"] as? [String: Any],
-              let messages = result["messages"] as? [[String: Any]] else {
-            throw CloudCommandError.failed(response["error"] as? String ?? "模块同步短信失败")
+        guard response["status"] as? String == "completed", let result = response["result"] as? [String: Any] else {
+            throw CloudCommandError.failed(response["error"] as? String ?? failure)
+        }
+        return result
+    }
+
+    /// The Agent's pending call history (newest ≤50), after acknowledging ids the iPhone stored.
+    func syncCloudCallHistory(ack: [String], target: CloudCommandTarget,
+                              timeout: TimeInterval = 25) async throws -> [CallRecord] {
+        let result = try await runAgentSyncCommand(
+            type: "call_history_sync", extra: ack.isEmpty ? [:] : ["ack": ack], target: target,
+            timeout: timeout, failure: "模块同步通话记录失败")
+        guard let history = result["history"] as? [[String: Any]] else { throw CloudCommandError.invalidResponse }
+        let data = try JSONSerialization.data(withJSONObject: history)
+        return try AirSIMAPI.makeDecoder().decode([CallRecord].self, from: data)
+    }
+
+    /// Asks the Agent, through the Relay command channel, for retained SMS after a cursor.
+    func syncCloudSMS(since: String?, target: CloudCommandTarget, timeout: TimeInterval = 25) async throws -> CloudSMSSyncPage {
+        let result = try await runAgentSyncCommand(
+            type: "sms_sync", extra: since.map { ["since": $0] } ?? [:], target: target,
+            timeout: timeout, failure: "模块同步短信失败")
+        guard let messages = result["messages"] as? [[String: Any]] else {
+            throw CloudCommandError.invalidResponse
         }
         return CloudSMSSyncPage(
             messages: messages.map { Dictionary(uniqueKeysWithValues: $0.map { (AnyHashable($0.key), $0.value) }) },
@@ -1732,7 +1753,7 @@ final class VoIPPushController: NSObject {
         simAccount: String? = nil,
         mediaTransport: CloudMediaTransport? = nil,
         call: IncomingVoIPCall? = nil,
-        extra: [String: String] = [:]
+        extra: [String: Any] = [:]
     ) async throws -> CloudCommandEnqueueResponse {
         guard CloudModePreference.isEnabled() else { throw CloudCommandError.cloudModeDisabled }
         try Task.checkCancellation()

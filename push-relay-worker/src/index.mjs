@@ -38,7 +38,8 @@ const MEDIA_CLIENT_ROLES = new Set(["watch", "iphone"]);
 const CALL_OWNERS = new Set(["watch", "iphone", "android"]);
 // sms_sync: the iPhone asks its Agent for SMS after a cursor; the reply travels in the
 // command result (sealed per message when the pairing has an E2E key).
-const COMMAND_TYPES = new Set(["dial", "send_sms", "dtmf", "sms_sync"]);
+// call_history_sync: same for the Agent's call history; `ack` lists ids the iPhone stored.
+const COMMAND_TYPES = new Set(["dial", "send_sms", "dtmf", "sms_sync", "call_history_sync"]);
 const MEDIA_TRANSPORTS = new Set(["legacy_pcm", "webrtc"]);
 
 let cachedProviderToken = "";
@@ -263,6 +264,7 @@ async function enqueueDeviceCommand(request, env) {
     number: normalizePhoneNumber(value.number),
     ...(value.type === "send_sms" ? { message: value.message.trim() } : {}),
     ...(value.type === "sms_sync" && value.since ? { since: value.since } : {}),
+    ...(value.type === "call_history_sync" && value.ack?.length ? { ack: value.ack } : {}),
     ...(["dial", "send_sms"].includes(value.type) && value.sim_account ? { sim_account: value.sim_account } : {}),
     ...(dtmfCall ? {call:dtmfCall,owner:"iphone"} : {}),
   };
@@ -332,7 +334,7 @@ async function enqueueDeviceCommand(request, env) {
     logSMS({ direction: "sync", stage: response.ok ? "requested" : "rejected", command_id: shortID(command.command_id),
       agent_id: target ?? "", resumed: Boolean(command.since) });
   }
-  if (value.type !== "sms_sync") await recordDashboardEvent(env, {
+  if (!["sms_sync", "call_history_sync"].includes(value.type)) await recordDashboardEvent(env, {
     type: value.type === "dial" ? "call" : "sms",
     device_id: authenticated.device.device_id,
     status: "queued",
@@ -492,6 +494,12 @@ function validateDeviceCommand(value) {
   if (value.type === "sms_sync") {
     if (value.since !== undefined && (typeof value.since !== "string" || value.since.length > 128 ||
         /[\u0000-\u001f\u007f]/.test(value.since))) return "invalid SMS sync cursor";
+    return "";
+  }
+  if (value.type === "call_history_sync") {
+    if (value.ack !== undefined && (!Array.isArray(value.ack) || value.ack.length > 100 ||
+        value.ack.some(id => typeof id !== "string" || !id || id.length > 128 ||
+          /[\u0000-\u001f\u007f]/.test(id)))) return "invalid call history acknowledgement";
     return "";
   }
   const number = normalizePhoneNumber(value.number);
@@ -903,6 +911,7 @@ function sameCommandIntent(left, right) {
   if (!matchesTarget(left?.target_agent_id, right?.target_agent_id)) return false;
   if (left?.type !== "call_control" && (left?.number !== right?.number || left?.message !== right?.message)) return false;
   if (left?.type === "sms_sync") return stringValue(left.since) === stringValue(right.since);
+  if (left?.type === "call_history_sync") return JSON.stringify(left.ack ?? []) === JSON.stringify(right.ack ?? []);
   if (left?.type === "dtmf") return stringValue(left.call?.call_uuid).toLowerCase() === stringValue(right.call?.call_uuid).toLowerCase()
     && (Number(left.call?.generation)||1) === (Number(right.call?.generation)||1);
   if (["dial", "send_sms"].includes(left?.type) &&

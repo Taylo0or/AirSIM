@@ -2102,3 +2102,29 @@ test("SMS alert names the receiving line by its number when the Agent reports on
   assert.equal(captured[0].sim_slot, "SIM 1");
   assert.equal(captured[1].aps.alert.subtitle, "接收于 SIM 2");
 });
+
+test("call history sync carries acknowledgements and returns the Agent's records untouched", async () => {
+  const env = testEnvironment(); env.COMMANDS = new MemoryCommandNamespace();
+  await worker.fetch(post("/v1/devices/register", registration), env);
+  const auth = {device_id: registration.device_id, device_secret: registration.device_secret};
+  const command = {...auth, command_id: "7e0c1d6a-8f8e-4b8a-9d3e-1f2a3b4c5d60", type: "call_history_sync",
+    target_agent_id: "android-A", ack: ["android-1", "android-2"]};
+  const enqueue = body => worker.fetch(post("/v2/commands/enqueue", body), env);
+  for (const ack of ["android-1", [7], Array.from({length: 101}, (_, i) => `id-${i}`), ["bad\nid"]]) {
+    assert.equal((await enqueue({...command, command_id: crypto.randomUUID(), ack})).status, 400);
+  }
+  assert.equal((await enqueue(command)).status, 202);
+  assert.equal((await enqueue({...command, ack: ["android-3"]})).status, 409);
+  const pulled = await (await worker.fetch(post("/v2/commands/pull", {...auth, agent_id: "android-A"}), env)).json();
+  assert.deepEqual(pulled.commands[0].ack, ["android-1", "android-2"]);
+  const result = {history: [{id: "android-3", index: 1, direction: "incoming", state: "ended", number: "10086",
+    started_at: "2026-11-19T22:37:41Z", updated_at: "2026-11-19T22:38:46Z", missed: false}], more: false};
+  assert.equal((await worker.fetch(post("/v2/commands/complete", {...auth, agent_id: "android-A",
+    command_id: command.command_id, status: "completed", result}), env)).status, 202);
+  const read = await (await worker.fetch(post("/v2/commands/result", {...auth,
+    command_id: command.command_id, target_agent_id: "android-A"}), env)).json();
+  assert.deepEqual(read.result, result);
+  const bare = {...command, command_id: crypto.randomUUID()};
+  delete bare.ack;
+  assert.equal((await enqueue(bare)).status, 202);
+});

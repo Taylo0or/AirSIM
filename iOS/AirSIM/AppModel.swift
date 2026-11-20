@@ -3198,6 +3198,11 @@ final class AppModel: ObservableObject {
             presentCurrentCallInApp()
             return
         }
+        // Repeated taps used to be dropped silently by perform()'s busy guard while the
+        // first answer was still in flight. Show the in-flight state instead.
+        guard !answeringCall else { return }
+        answeringCall = true
+        defer { answeringCall = false }
         beginCallTransitionProtection()
         audio.stopCallTone()
         callPresentationSurface = .app
@@ -3205,7 +3210,7 @@ final class AppModel: ObservableObject {
         // The authoritative store cannot move back to .ringing, so an
         // optimistic transition here would strand the call on failure.
         if callKit.managesCurrentCall {
-            await perform {
+            await perform(allowWhileBusy: true) {
                 do {
                     try await self.callKit.answerCurrentCall(presentInApp: true)
                 } catch CallKitBridgeError.staleSystemCall {
@@ -3214,7 +3219,7 @@ final class AppModel: ObservableObject {
                 }
             }
         } else {
-            await perform { try await self.callKitAnswer(origin: .app) }
+            await perform(allowWhileBusy: true) { try await self.callKitAnswer(origin: .app) }
         }
     }
 
@@ -3542,6 +3547,9 @@ final class AppModel: ObservableObject {
         print("[AirSIM Dial] \(message)")
 #endif
     }
+
+    /// True while an in-app answer is being submitted; the button shows "接听中…".
+    @Published private(set) var answeringCall = false
 
     /// Tokens of outgoing SMS whose delivery is running in this process.
     private var inFlightSMSTokens = Set<String>()
@@ -3917,14 +3925,7 @@ final class AppModel: ObservableObject {
         guard !cloudSMSSyncRunning else { return 0 }
         cloudSMSSyncRunning = true
         defer { cloudSMSSyncRunning = false }
-        let bound = boundAgentID
-        let route: CloudCommandTarget
-        if let cached = cloudDialTarget(bound: bound) {
-            route = cached
-        } else {
-            let status = try await VoIPPushController.shared.fetchCloudAgentStatus()
-            route = try cloudTarget(status: status, bound: bound, requireOnline: false)
-        }
+        let route = try await cloudSyncTarget()
         var cursors = UserDefaults.standard.dictionary(forKey: Self.cloudSMSSyncCursorsKey) as? [String: String] ?? [:]
         var since = cursors[route.agentID]
         var imported = 0
@@ -3952,12 +3953,55 @@ final class AppModel: ObservableObject {
         return imported
     }
 
+    private func cloudSyncTarget() async throws -> CloudCommandTarget {
+        let bound = boundAgentID
+        if let cached = cloudDialTarget(bound: bound) { return cached }
+        let status = try await VoIPPushController.shared.fetchCloudAgentStatus()
+        return try cloudTarget(status: status, bound: bound, requireOnline: false)
+    }
+
     /// Foreground catch-up: at most once a minute, silently, when only the cloud reaches the Agent.
     private func syncCloudSMSAutomaticallyIfDue() {
         guard verifiedVoWLANAPI() == nil, CloudSignalingPreference.isEnabled(), CloudModePreference.isEnabled(),
               Date().timeIntervalSince(lastAutomaticCloudSMSSync) > 60 else { return }
         lastAutomaticCloudSMSSync = Date()
-        Task { _ = try? await syncCloudSMSFromAgent() }
+        Task {
+            _ = try? await syncCloudSMSFromAgent()
+            _ = try? await syncCloudCallHistoryFromAgent()
+        }
+    }
+
+    private static let cloudCallHistoryAckKey = "airsim.cloud-call-history-ack.v1"
+    private var cloudCallHistorySyncRunning = false
+
+    /// Cloud calls were never recorded on the iPhone: history only arrived from the Agent
+    /// over VoWLAN. Pull the Agent's pending history through the Relay, store it like the
+    /// local poll does, and acknowledge the stored ids on the next sync.
+    @discardableResult
+    func syncCloudCallHistoryFromAgent() async throws -> Int {
+        guard !cloudCallHistorySyncRunning, CloudModePreference.isEnabled() else { return 0 }
+        cloudCallHistorySyncRunning = true
+        defer { cloudCallHistorySyncRunning = false }
+        let route = try await cloudSyncTarget()
+        var pending = UserDefaults.standard.dictionary(forKey: Self.cloudCallHistoryAckKey) as? [String: [String]] ?? [:]
+        let records = try await VoIPPushController.shared.syncCloudCallHistory(
+            ack: pending[route.agentID] ?? [], target: route)
+        pending[route.agentID] = nil
+        if !records.isEmpty {
+            guard persistDeviceHistory(records, agentID: route.agentID) else {
+                throw CloudCommandError.failed("通话记录保存到本机失败")
+            }
+            pending[route.agentID] = Array(records.map(\.id).prefix(100))
+        }
+        UserDefaults.standard.set(pending, forKey: Self.cloudCallHistoryAckKey)
+        return records.count
+    }
+
+    /// Recents pull-to-refresh: the local poll covers VoWLAN; away from it, ask through the cloud.
+    func refreshCallHistory() async {
+        guard verifiedVoWLANAPI() == nil else { restartPolling(); return }
+        do { try await syncCloudCallHistoryFromAgent() }
+        catch { errorMessage = "云端同步通话记录失败：\(error.localizedDescription)" }
     }
 
     /// Imports cloud SMS pushes still listed in Notification Center. Pushes that arrived
@@ -4465,6 +4509,13 @@ final class AppModel: ObservableObject {
     }
 
     private func clearLockedTransport() {
+        if currentCallTransport == .cloud {
+            // The Agent writes its history record when Telecom removes the call.
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(4))
+                _ = try? await self?.syncCloudCallHistoryFromAgent()
+            }
+        }
         currentCallTransport = nil
         currentLocalAPI = nil
         currentPCMRoute = nil

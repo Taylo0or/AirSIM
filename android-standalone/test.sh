@@ -22,6 +22,9 @@ assert_contains "$ROOT/../android/phone-control-app/src/com/airsim/phonecontrol/
   'case "/api/calls/dtmf" -> command("dtmf", localCallTarget("dtmf", input)' \
   'standalone DTMF must preserve the explicitly requested published call identity'
 
+assert_contains "$ROOT/../android/phone-control-app/src/com/airsim/phonecontrol/StandaloneAgentGateway.java" \
+  'if ("call_history_sync".equals(type)) {' \
+  'cloud call history sync must be answered from the gateway history'
 S="$ROOT/../android/phone-control-app/src/com/airsim/phonecontrol/StandaloneAgentService.java"
 assert_contains "$S" 'START_GATE.request(' \
   'agent service start must be idempotent while the service is already running'

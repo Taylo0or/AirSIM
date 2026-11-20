@@ -180,22 +180,7 @@ final class StandaloneAgentGateway {
             case "/api/sms/send" -> command("send_sms", "", input.optString("phone", ""),
                     input.optString("message", ""), input.optString("sim_account", ""));
             case "/api/calls/history/ack" -> {
-                JSONArray ids = input.optJSONArray("ids") == null ? new JSONArray() : input.getJSONArray("ids");
-                synchronized (callsLock) {
-                    for (int index = callHistory.length() - 1; index >= 0; index--) {
-                        JSONObject record = callHistory.optJSONObject(index);
-                        if (record == null) continue;
-                        for (int id = 0; id < ids.length(); id++) {
-                            String value = ids.optString(id, "");
-                            if (!value.isEmpty() && (value.equals(record.optString("id"))
-                                    || value.equals(record.optString("android_id"))
-                                    || value.equals(record.optString("backend_id")))) {
-                                callHistory.remove(index);
-                                break;
-                            }
-                        }
-                    }
-                }
+                acknowledgeCallHistory(input.optJSONArray("ids"));
                 yield ok("{\"accepted\":true}");
             }
             case "/api/calls/audio/host/warmup" -> ok("{\"warming\":true}");
@@ -263,6 +248,10 @@ final class StandaloneAgentGateway {
             }
         }
         String type = command.optString("type", "");
+        if ("call_history_sync".equals(type)) {
+            return rememberCommand(commandKey, new JSONObject().put("command_id", commandID)
+                    .put("status", "completed").put("result", cloudCallHistory(command.optJSONArray("ack"))));
+        }
         if ("sms_sync".equals(type)) {
             return rememberCommand(commandKey, new JSONObject().put("command_id", commandID)
                     .put("status", "completed")
@@ -403,6 +392,37 @@ final class StandaloneAgentGateway {
         }
         callEvents.advance();
         agentEvents.advance();
+    }
+
+    /** Drops history the iPhone stored (local ack endpoint and cloud call_history_sync). */
+    private void acknowledgeCallHistory(JSONArray ids) {
+        if (ids == null || ids.length() == 0) return;
+        synchronized (callsLock) {
+            for (int index = callHistory.length() - 1; index >= 0; index--) {
+                JSONObject record = callHistory.optJSONObject(index);
+                if (record == null) continue;
+                for (int id = 0; id < ids.length(); id++) {
+                    String value = ids.optString(id, "");
+                    if (!value.isEmpty() && (value.equals(record.optString("id"))
+                            || value.equals(record.optString("android_id"))
+                            || value.equals(record.optString("backend_id")))) {
+                        callHistory.remove(index);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /** Cloud call_history_sync: acknowledge what the iPhone stored, return the newest pending records. */
+    JSONObject cloudCallHistory(JSONArray ack) throws Exception {
+        acknowledgeCallHistory(ack);
+        synchronized (callsLock) {
+            int start = Math.max(0, callHistory.length() - 50);
+            JSONArray latest = new JSONArray();
+            for (int index = start; index < callHistory.length(); index++) latest.put(callHistory.get(index));
+            return new JSONObject().put("history", latest).put("more", start > 0);
+        }
     }
 
     private JSONObject callSnapshot() throws Exception {

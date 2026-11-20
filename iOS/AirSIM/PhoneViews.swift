@@ -919,6 +919,7 @@ struct RecentsView: View {
             .environment(\.defaultMinListRowHeight, PhoneListMetrics.rowHeight)
             .background(PhoneBackdrop())
             .navigationTitle(L10n.t("最近通话"))
+            .refreshable { await model.refreshCallHistory() }
             .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索号码")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -2319,9 +2320,12 @@ struct ActiveCallView: View {
                 CallDecisionButton(title: L10n.t("拒接"), icon: "phone.down.fill", color: .red) {
                     Task { await model.reject() }
                 }
-                CallDecisionButton(title: L10n.t("接听"), icon: "phone.fill", color: .green) {
+                CallDecisionButton(title: L10n.t(model.answeringCall ? "接听中…" : "接听"),
+                                   icon: "phone.fill", color: .green) {
                     Task { await model.answer() }
                 }
+                .disabled(model.answeringCall)
+                .opacity(model.answeringCall ? 0.6 : 1)
             }
         } else {
             VStack(spacing: 28) {

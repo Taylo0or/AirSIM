@@ -117,7 +117,7 @@ enum L10n {
 
     private static let english: [String: String] = [
         "拨号": "Dial", "最近": "Recents", "最近通话": "Recents", "短信": "Messages", "联系人": "Contacts", "通讯录": "Contacts", "设置": "Settings",
-        "输入号码": "Enter number", "接听": "Accept", "拒接": "Decline", "挂断": "End", "静音": "Mute",
+        "输入号码": "Enter number", "接听": "Accept", "接听中…": "Answering…", "云端同步通话记录失败": "Cloud call history sync failed", "拒接": "Decline", "挂断": "End", "静音": "Mute",
         "取消静音": "Unmute", "扬声器": "Speaker", "录音": "Record", "停止录音": "Stop Recording", "通话中": "On Call",
         "等待接听": "Waiting", "暂无通话记录": "No Recents", "新信息": "New Message", "收件人": "To",
         "短信内容": "Message", "发送": "Send", "已发送": "Sent", "发送中…": "Sending…", "发送失败": "Not Delivered",

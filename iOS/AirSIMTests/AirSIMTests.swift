@@ -3271,6 +3271,23 @@ final class AirSIMTests: XCTestCase {
         XCTAssertEqual(pushed.timestamp.timeIntervalSince1970, 1_791_448_212.123456789, accuracy: 0.001)
     }
 
+    func testCloudCallHistoryRecordFromStandaloneAgentDecodes() throws {
+        // Shape of StandaloneAgentGateway.callHistory entries returned by call_history_sync.
+        let json = Data(#"""
+        [{"id":"android-1795127861981","android_id":"c4959976-4fb4-4451-a2c9-4eff998fe242","index":1,
+          "started_at":"2026-11-19T22:37:41.981Z","missed":false,"direction":"incoming","state":"ended",
+          "number":"13800000000","updated_at":"2026-11-19T22:38:46.179Z","connected_at":"2026-11-19T22:37:53.748Z",
+          "ended_at":"2026-11-19T22:38:46.179Z","slot_index":0,"slot_id":0}]
+        """#.utf8)
+        let records = try AirSIMAPI.makeDecoder().decode([CallRecord].self, from: json)
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(records[0].id, "android-1795127861981")
+        XCTAssertEqual(records[0].direction, "incoming")
+        XCTAssertFalse(records[0].missed)
+        XCTAssertNotNil(records[0].connectedAt)
+        XCTAssertNotNil(records[0].endedAt)
+    }
+
     func testSIMLineDisplayShowsReportedNumberPerSlot() throws {
         let suite = "airsim.sim-line-test.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
