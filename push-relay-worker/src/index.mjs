@@ -263,6 +263,7 @@ async function enqueueDeviceCommand(request, env) {
     expires_at: new Date(Date.now() + (value.type === "send_sms" ? 5 : 2) * 60_000).toISOString(),
     number: normalizePhoneNumber(value.number),
     ...(value.type === "send_sms" ? { message: value.message.trim() } : {}),
+    ...(value.type === "send_sms" && value.media_ids?.length ? { media_ids: value.media_ids } : {}),
     ...(value.type === "sms_sync" && value.since ? { since: value.since } : {}),
     ...(value.type === "call_history_sync" && value.ack?.length ? { ack: value.ack } : {}),
     ...(["dial", "send_sms"].includes(value.type) && value.sim_account ? { sim_account: value.sim_account } : {}),
@@ -508,7 +509,10 @@ function validateDeviceCommand(value) {
     return "invalid DTMF digit";
   }
   if (value.type === "send_sms") {
-    if (typeof value.message !== "string" || !value.message.trim() ||
+    const mediaIDs = value.media_ids;
+    if (mediaIDs !== undefined && (!Array.isArray(mediaIDs) || mediaIDs.length < 1 || mediaIDs.length > 3 ||
+        mediaIDs.some(id => typeof id !== "string" || !/^[A-Za-z0-9_-]{16,64}$/.test(id)))) return "invalid MMS media";
+    if (typeof value.message !== "string" || (!value.message.trim() && !mediaIDs?.length) ||
         [...value.message].length > 2_000) return "invalid SMS content";
   }
   if (["dial", "send_sms"].includes(value.type)) {
@@ -916,6 +920,7 @@ function sameCommandIntent(left, right) {
     && (Number(left.call?.generation)||1) === (Number(right.call?.generation)||1);
   if (["dial", "send_sms"].includes(left?.type) &&
       stringValue(left.sim_account) !== stringValue(right.sim_account)) return false;
+  if (left?.type === "send_sms" && JSON.stringify(left.media_ids ?? []) !== JSON.stringify(right.media_ids ?? [])) return false;
   if (left?.type !== "call_control") return true;
   return left.action === right.action &&
     left.owner === right.owner &&
@@ -1507,6 +1512,23 @@ async function simLineLabel(env, deviceID, agentID, simSlot) {
     return simSlot;
   }
 }
+function smsAttachments(value) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 3) return null;
+  const attachments = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object" || !["image", "audio", "video", "file"].includes(item.kind)) return null;
+    const url = stringValue(item.url);
+    if (!/^https:\/\/[^\s]+$/.test(url) || url.length > 600) return null;
+    attachments.push({
+      kind: item.kind, url,
+      ...(typeof item.mime === "string" && /^[a-z0-9.+-]+\/[a-z0-9.+-]+$/i.test(item.mime) ? { mime: item.mime.toLowerCase() } : {}),
+      ...(Number.isFinite(item.duration) && item.duration > 0 && item.duration < 3_600 ? { duration: item.duration } : {}),
+      ...(Number.isInteger(item.size) && item.size >= 0 ? { size: item.size } : {}),
+    });
+  }
+  return attachments;
+}
 function logSMS(fields) { console.log(JSON.stringify({ event: "sms_trace", ...fields })); }
 
 async function receiveSMS(request, env) {
@@ -1529,6 +1551,9 @@ async function receiveSMS(request, env) {
       timestamp > now + 300_000) {
     return jsonResponse(400, { error: "invalid incoming SMS" });
   }
+  // MMS / voicemail: up to three https attachments (voip.ms bridge media URLs).
+  const attachments = encrypted ? [] : smsAttachments(message.attachments);
+  if (attachments === null) return jsonResponse(400, { error: "invalid SMS attachments" });
   const sender = nonEmpty(message.sender) ? message.sender.trim() : "未知号码";
   const simSlot = /^SIM [1-9][0-9]?$/.test(stringValue(message.sim_slot).trim())
     ? stringValue(message.sim_slot).trim() : "";
@@ -1580,6 +1605,7 @@ async function receiveSMS(request, env) {
     content_truncated: truncated,
     code: stringValue(message.code),
     timestamp: deliveryTimestamp,
+    ...(attachments.length ? { attachments } : {}),
   }));
   try {
     await sendAPNs(env, authenticated.device, authenticated.device.alert_token, {

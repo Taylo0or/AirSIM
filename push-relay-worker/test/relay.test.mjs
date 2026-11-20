@@ -2128,3 +2128,48 @@ test("call history sync carries acknowledgements and returns the Agent's records
   delete bare.ack;
   assert.equal((await enqueue(bare)).status, 202);
 });
+
+test("incoming MMS/voicemail attachments reach the iPhone payload; bad ones are rejected", async () => {
+  const env = testEnvironment();
+  await worker.fetch(post("/v1/devices/register", registration), env);
+  const captured = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, options) => {
+    captured.push(JSON.parse(options.body));
+    return new Response("", { status: 200 });
+  };
+  try {
+    const base = { event: "incoming_sms", device_id: registration.device_id, device_secret: registration.device_secret,
+      sender: "+16045550100", content: "语音留言 0:12", timestamp: new Date().toISOString() };
+    const attachment = { kind: "audio", mime: "audio/wav", url: "https://relay.example/voipms/media/abcdefghijklmnop?sig=x", duration: 12.4, size: 198444 };
+    const ok = await worker.fetch(post("/v1/events/sms", { ...base, delivery_id: "vm-1", attachments: [attachment] }), env);
+    assert.equal(ok.status, 202);
+    assert.deepEqual(captured[0].attachments, [attachment]);
+    const insecure = await worker.fetch(post("/v1/events/sms", { ...base, delivery_id: "vm-2",
+      attachments: [{ ...attachment, url: "http://relay.example/x" }] }), env);
+    assert.equal(insecure.status, 400);
+    const plain = await worker.fetch(post("/v1/events/sms", { ...base, delivery_id: "vm-3" }), env);
+    assert.equal(plain.status, 202);
+    assert.equal(captured[1].attachments, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("send_sms may carry MMS media ids (text optional) and passes them to the Agent", async () => {
+  const env = testEnvironment(); env.COMMANDS = new MemoryCommandNamespace();
+  await worker.fetch(post("/v1/devices/register", registration), env);
+  const payload = { device_id: registration.device_id, device_secret: registration.device_secret,
+    command_id: "d87f982a-1750-4f03-9a96-6553e454f522", type: "send_sms", number: "+16045550100", message: "",
+    media_ids: ["AbCdEfGhIjKlMnOpQrStUv"], target_agent_id: "voipms-1" };
+  assert.equal((await worker.fetch(post("/v2/commands/enqueue", payload), env)).status, 202);
+  const pulled = await (await worker.fetch(post("/v2/commands/pull", { ...payload, agent_id: "voipms-1" }), env)).json();
+  assert.deepEqual(pulled.commands[0].media_ids, ["AbCdEfGhIjKlMnOpQrStUv"]);
+  for (const media_ids of [[], ["bad id!"], ["AbCdEfGhIjKlMnOpQrStUv", "x", "y", "z"]]) {
+    const response = await worker.fetch(post("/v2/commands/enqueue", { ...payload, command_id: "e87f982a-1750-4f03-9a96-6553e454f522", media_ids }), env);
+    assert.equal(response.status, 400);
+  }
+  const empty = { ...payload, command_id: "f87f982a-1750-4f03-9a96-6553e454f522" };
+  delete empty.media_ids;
+  assert.equal((await worker.fetch(post("/v2/commands/enqueue", empty), env)).status, 400);
+});
