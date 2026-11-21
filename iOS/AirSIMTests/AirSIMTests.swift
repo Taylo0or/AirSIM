@@ -6232,3 +6232,12 @@ final class SMSAttachmentTests: XCTestCase {
         XCTAssertEqual(legacy.bubbleText, "hi")
     }
 }
+
+
+final class IncomingAnswerRoutePolicyTests: XCTestCase {
+    func testCloudOnlyAgentsNeverWaitForALocalRoute() {
+        XCTAssertFalse(IncomingAnswerRoutePolicy.waitsForLocalRoute(mode: .cloud, cloudOnlyAgent: false))
+        XCTAssertFalse(IncomingAnswerRoutePolicy.waitsForLocalRoute(mode: .automatic, cloudOnlyAgent: true))
+        XCTAssertTrue(IncomingAnswerRoutePolicy.waitsForLocalRoute(mode: .automatic, cloudOnlyAgent: false))
+    }
+}

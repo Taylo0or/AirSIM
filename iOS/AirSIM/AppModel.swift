@@ -3594,7 +3594,10 @@ final class AppModel: ObservableObject {
     }
 
     /// voip.ms bridge Agents (agent_kind "voipms") can send MMS.
-    func agentSupportsMMS(_ agentID: String?) -> Bool {
+    func agentSupportsMMS(_ agentID: String?) -> Bool { isCloudOnlyAgent(agentID) }
+
+    /// voip.ms bridge Agents live behind the Relay only: no VoWLAN, BLE or Samsung route ever exists.
+    func isCloudOnlyAgent(_ agentID: String?) -> Bool {
         guard let agentID, !agentID.isEmpty else { return false }
         if pairedAndroidAgents.first(where: { $0.id == agentID })?.agentKind == "voipms" { return true }
         return agentID.hasPrefix("voipms-")
@@ -5450,26 +5453,32 @@ extension AppModel: CallKitActionHandling {
                 return
             }
             let cloudMediaEnabled = CloudModePreference.isEnabled()
-            if selectedMode == .bluetooth {
+            let cloudOnlyCall = isCloudOnlyAgent(pushedCall?.agentID)
+            if selectedMode == .bluetooth, !cloudOnlyCall {
                 guard let pushedCall else { throw CallKitBridgeError.bluetoothUnavailable }
                 try await answerBluetoothPush(pushedCall, origin: origin, isCurrent: isCurrent)
                 return
             }
             // Do not probe VoWLAN from an explicit cloud answer. A local probe
             // timeout used to consume the answer path before any cloud request.
+            // A call from a cloud-only Agent (voip.ms) never has a local route: waiting
+            // for one held the caller ~10 s, and a reachable K40 could be picked instead.
+            let waitsForLocal = IncomingAnswerRoutePolicy.waitsForLocalRoute(
+                mode: selectedMode, cloudOnlyAgent: cloudOnlyCall)
             var vowlanRoute: (AirSIMAPI, PCMRoute)? =
-                selectedMode == .cloud ? nil : await readyVoWLANRoute(waitForProbe: false)
+                waitsForLocal ? await readyVoWLANRoute(waitForProbe: false) : nil
             // APNs normally carries a cloud media URL. That must not make the
             // CallKit answer skip VoWLAN discovery: answering from the system
             // UI can happen before Bonjour/Tailscale has restored the route,
             // while the in-app answer button is pressed later. Wait for the
             // local route in every non-cloud mode before choosing media.
-            if vowlanRoute == nil, selectedMode != .cloud {
+            if vowlanRoute == nil, waitsForLocal {
                 vowlanRoute = await waitForLocalIncomingRoute()
             }
             guard isCurrent() else { throw CancellationError() }
+            // A cloud-only line is answered over the Relay whatever the local preference is.
             let transport = CallTransportPolicy.preferred(
-                mode: selectedMode,
+                mode: cloudOnlyCall ? .cloud : selectedMode,
                 vowlanReady: vowlanRoute != nil,
                 cloudMediaAvailable: pushedCall?.authenticatedMediaURL != nil,
                 cloudMediaEnabled: cloudMediaEnabled
@@ -5961,5 +5970,13 @@ extension AppModel {
         publishWidgetSnapshot()
         await refreshLiveActivityIdle()
         return true
+    }
+}
+
+
+/// Whether answering an incoming call may wait for the local (VoWLAN) route.
+enum IncomingAnswerRoutePolicy {
+    static func waitsForLocalRoute(mode: AirSIMConnectionMode, cloudOnlyAgent: Bool) -> Bool {
+        mode != .cloud && !cloudOnlyAgent
     }
 }
