@@ -1729,7 +1729,7 @@ struct WarmMessagesView: View {
                 ForEach(Array(list.enumerated()), id: \.element.sender) { index, conversation in
                     WarmConversationRow(sender: conversation.sender, messages: conversation.messages) { open(conversation.sender) }
                         .padding(.horizontal, 20)
-                    if index < list.count - 1 { WarmHairline().padding(.leading, 36) }
+                    if index < list.count - 1 { WarmHairline().padding(.leading, 92) }
                 }
             }
             .padding(.bottom, 16)
@@ -1760,6 +1760,38 @@ struct WarmMessagesView: View {
     }
 }
 
+/// Conversation avatar: contact photo › service logo › contact initial › person glyph.
+struct WarmSMSAvatar: View {
+    let name: String?
+    let photoData: Data?
+    let brand: SMSServiceBrand?
+    @ScaledMetric(relativeTo: .body) private var side: CGFloat = 44
+
+    var body: some View {
+        let size = min(side, 64)
+        Group {
+            if let photoData, let image = UIImage(data: photoData) {
+                Image(uiImage: image).resizable().scaledToFill()
+            } else if let brand {
+                Image(brand.rawValue).resizable().scaledToFit().padding(size * 0.17)
+                    .frame(width: size, height: size).background(Color.white)
+            } else if let initial = name?.trimmingCharacters(in: .whitespacesAndNewlines).first {
+                Warm.accentSoft.overlay {
+                    Text(String(initial)).font(.system(size: size * 0.42, weight: .semibold)).foregroundStyle(Warm.accent)
+                }
+            } else {
+                Warm.muted.overlay {
+                    Image(systemName: "person.fill").font(.system(size: size * 0.42)).foregroundStyle(Warm.secondary)
+                }
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .overlay(Circle().strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
+        .accessibilityHidden(true)
+    }
+}
+
 private struct WarmConversationRow: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var contacts: ContactStore
@@ -1774,16 +1806,13 @@ private struct WarmConversationRow: View {
         let brand = contact == nil ? SMSServiceBrand.match(sender) : nil
         let name = contact?.name ?? WarmPhone.format(sender)
         Button(action: open) {
-            HStack(alignment: .top, spacing: 8) {
-                Circle().fill(unread ? Warm.accent : Color.clear).frame(width: 8, height: 8).padding(.top, 7)
+            HStack(alignment: .center, spacing: 8) {
+                Circle().fill(unread ? Warm.accent : Color.clear).frame(width: 8, height: 8)
+                WarmSMSAvatar(name: contact?.name, photoData: contact?.photoData, brand: brand)
+                    .padding(.trailing, 4)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(alignment: .firstTextBaseline) {
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            if let brand {
-                                SMSServiceLogo(brand: brand).alignmentGuide(.firstTextBaseline) { $0.height * 0.8 }
-                            }
-                            Text(name).font(unread ? .body.weight(.semibold) : .body).monospacedDigit().foregroundStyle(Warm.text).lineLimit(1)
-                        }
+                        Text(name).font(unread ? .body.weight(.semibold) : .body).monospacedDigit().foregroundStyle(Warm.text).lineLimit(1)
                         Spacer(minLength: 8)
                         if let latest {
                             Text(WarmDate.list(latest.timestamp)).font(.caption).monospacedDigit().foregroundStyle(Warm.secondary)
