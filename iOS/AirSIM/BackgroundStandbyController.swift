@@ -229,6 +229,7 @@ final class AirSIMNotificationDelegate: NSObject, UIApplicationDelegate, @precon
         }
         do {
             let pushed = try IncomingRemoteSMS(userInfo: userInfo)
+            NetworkDiagnosticsStore.recordSMSPush(sentAt: pushed.timestamp)
             SMSNotificationCoordinator.shared.markPush(agentID: pushed.agentID,
                                                         deliveryID: pushed.deliveryID)
             let saved = persistRemoteSMS(pushed)
@@ -268,6 +269,7 @@ final class AirSIMNotificationDelegate: NSObject, UIApplicationDelegate, @precon
             return
         }
         if let pushed = try? IncomingRemoteSMS(userInfo: notification.request.content.userInfo) {
+            NetworkDiagnosticsStore.recordSMSPush(sentAt: pushed.timestamp)
             SMSNotificationCoordinator.shared.markPush(agentID: pushed.agentID,
                                                         deliveryID: pushed.deliveryID)
         }

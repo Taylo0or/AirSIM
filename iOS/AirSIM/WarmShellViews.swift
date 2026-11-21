@@ -1770,13 +1770,20 @@ private struct WarmConversationRow: View {
     var body: some View {
         let latest = messages.last
         let unread = messages.contains { model.unreadMessageIDs.contains($0.id) }
-        let name = contacts.contact(for: sender)?.name ?? WarmPhone.format(sender)
+        let contact = contacts.contact(for: sender)
+        let brand = contact == nil ? SMSServiceBrand.match(sender) : nil
+        let name = contact?.name ?? WarmPhone.format(sender)
         Button(action: open) {
             HStack(alignment: .top, spacing: 8) {
                 Circle().fill(unread ? Warm.accent : Color.clear).frame(width: 8, height: 8).padding(.top, 7)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(alignment: .firstTextBaseline) {
-                        Text(name).font(unread ? .body.weight(.semibold) : .body).monospacedDigit().foregroundStyle(Warm.text).lineLimit(1)
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            if let brand {
+                                SMSServiceLogo(brand: brand).alignmentGuide(.firstTextBaseline) { $0.height * 0.8 }
+                            }
+                            Text(name).font(unread ? .body.weight(.semibold) : .body).monospacedDigit().foregroundStyle(Warm.text).lineLimit(1)
+                        }
                         Spacer(minLength: 8)
                         if let latest {
                             Text(WarmDate.list(latest.timestamp)).font(.caption).monospacedDigit().foregroundStyle(Warm.secondary)
@@ -1793,7 +1800,7 @@ private struct WarmConversationRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel([name, unread ? "未读" : nil, preview(latest), latest.map(source)].compactMap { $0 }.joined(separator: "，"))
+        .accessibilityLabel([brand?.displayName, name, unread ? "未读" : nil, preview(latest), latest.map(source)].compactMap { $0 }.joined(separator: "，"))
         .contextMenu {
             Button(role: .destructive) { model.deleteMessages(ids: Set(messages.map(\.id))) } label: { Label("删除会话", systemImage: "trash") }
         }
@@ -1848,6 +1855,8 @@ struct WarmAccountView: View {
                     }
                 }
                 group("支持") {
+                    row("network", "网络诊断", nil) { actions.openSettings([.help, .networkDiagnostics]) }
+                    divider
                     row("stethoscope", "帮助与诊断", nil) { actions.openSettings([.help]) }
                     divider
                     row("bubble.left.and.text.bubble.right", "意见反馈", nil) { actions.openSettings([.feedback]) }

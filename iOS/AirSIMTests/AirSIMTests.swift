@@ -6241,3 +6241,54 @@ final class IncomingAnswerRoutePolicyTests: XCTestCase {
         XCTAssertTrue(IncomingAnswerRoutePolicy.waitsForLocalRoute(mode: .automatic, cloudOnlyAgent: false))
     }
 }
+
+final class SMSServiceBrandTests: XCTestCase {
+    func testEveryBrandHasBundledLogo() {
+        for brand in SMSServiceBrand.allCases {
+            XCTAssertNotNil(UIImage(named: brand.rawValue), brand.rawValue)
+            XCTAssertFalse(brand.displayName.isEmpty)
+        }
+    }
+
+    func testExactServiceNumbersOnly() {
+        XCTAssertEqual(SMSServiceBrand.match("10086"), .mobile)
+        XCTAssertEqual(SMSServiceBrand.match(" +86 10086 "), .mobile)
+        XCTAssertEqual(SMSServiceBrand.match("008695588"), .icbc)
+        XCTAssertEqual(SMSServiceBrand.match("1069095599"), .abc)
+        XCTAssertEqual(SMSServiceBrand.match("1065795555"), .cmb)
+        XCTAssertEqual(SMSServiceBrand.match("106901195568"), .minsheng)
+        XCTAssertEqual(SMSServiceBrand.match("950616"), .jd)
+        XCTAssertNil(SMSServiceBrand.match("100861"), "prefix is not identity")
+        XCTAssertNil(SMSServiceBrand.match("1008"))
+        XCTAssertNil(SMSServiceBrand.match("+110086"), "foreign country code")
+        XCTAssertNil(SMSServiceBrand.match("10086a"))
+        XCTAssertNil(SMSServiceBrand.match("中国移动"))
+        XCTAssertNil(SMSServiceBrand.match(""))
+    }
+}
+
+final class NetworkDiagnosticsTests: XCTestCase {
+    func testRelayLatencyUsesMedianAndReportsFailures() {
+        let result = RelayProbeResult(host: "relay.example", version: "0.2.1", millis: [120, 80, 95], failures: 1)
+        XCTAssertEqual(result.median, 95)
+        XCTAssertEqual(NetworkDiagnosticsCopy.latency(result), "95 ms（120 / 80 / 95 ms，失败 1 次）")
+        XCTAssertEqual(NetworkDiagnosticsCopy.latency(RelayProbeResult(host: "", version: "", millis: [], failures: 3)), "全部失败")
+    }
+
+    func testPushReceiptStoreKeepsTimesOnly() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "NetworkDiagnosticsTests"))
+        defaults.removePersistentDomain(forName: "NetworkDiagnosticsTests")
+        XCTAssertNil(NetworkDiagnosticsStore.lastVoIPPush(defaults: defaults))
+        XCTAssertNil(NetworkDiagnosticsStore.lastSMSPush(defaults: defaults))
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        NetworkDiagnosticsStore.recordVoIPPush(at: now, defaults: defaults)
+        NetworkDiagnosticsStore.recordSMSPush(sentAt: now.addingTimeInterval(-3), at: now, defaults: defaults)
+        XCTAssertEqual(NetworkDiagnosticsStore.lastVoIPPush(defaults: defaults), now)
+        let sms = try XCTUnwrap(NetworkDiagnosticsStore.lastSMSPush(defaults: defaults))
+        XCTAssertEqual(sms.receivedAt, now)
+        XCTAssertEqual(sms.delay, 3, accuracy: 0.001)
+        XCTAssertEqual(NetworkDiagnosticsCopy.delay(sms.delay), "约 3 秒")
+        XCTAssertEqual(NetworkDiagnosticsCopy.delay(-5), "时钟偏差，无法估算")
+        defaults.removePersistentDomain(forName: "NetworkDiagnosticsTests")
+    }
+}

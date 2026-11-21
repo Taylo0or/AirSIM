@@ -416,7 +416,12 @@ struct MessageThreadView: View {
         .toolbar {
             ToolbarItem(placement: .principal) {
                 VStack(spacing: 2) {
-                    Text(model.contacts.displayName(for: sender)).font(.headline).lineLimit(1)
+                    HStack(spacing: 6) {
+                        if model.contacts.contact(for: sender) == nil, let brand = SMSServiceBrand.match(sender) {
+                            SMSServiceLogo(brand: brand)
+                        }
+                        Text(model.contacts.displayName(for: sender)).font(.headline).lineLimit(1)
+                    }
                     SMSAccountPicker(recipient: sender, agentID: conversationLine)
                 }
             }

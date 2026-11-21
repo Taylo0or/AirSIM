@@ -1913,6 +1913,31 @@ final class VoIPPushController: NSObject {
         return URLSession(configuration: configuration)
     }()
 
+    /// Times read-only `GET /healthz` round trips for the network diagnostics page.
+    func probeRelayForDiagnostics(samples: Int = 3) async throws -> RelayProbeResult {
+        guard let registration = currentRegistration(allowLocalMode: true) else {
+            throw CloudAgentStatusError.unavailable
+        }
+        guard let url = RelayEndpoint.url(base: registration.relayURL, path: "healthz") else {
+            throw CloudAgentStatusError.invalidRelayURL
+        }
+        var millis: [Int] = []
+        var version = ""
+        var lastError: Error?
+        for _ in 0..<max(1, samples) {
+            let started = Date()
+            do {
+                version = try await fetchRelayHealthVersionOnce(url: url)
+                millis.append(Int((Date().timeIntervalSince(started) * 1000).rounded()))
+            } catch {
+                lastError = error
+            }
+        }
+        if millis.isEmpty { throw lastError ?? CloudAgentStatusError.invalidResponse }
+        return RelayProbeResult(host: url.host ?? registration.relayURL, version: version,
+                                millis: millis, failures: max(1, samples) - millis.count)
+    }
+
     private func fetchRelayHealthVersionOnce(url: URL) async throws -> String {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
@@ -2141,6 +2166,7 @@ extension VoIPPushController: PKPushRegistryDelegate {
         Task { @MainActor in
             PushDiagnostics.record("收到 PushKit 来电", fields: [
                 "app_state": String(UIApplication.shared.applicationState.rawValue)])
+            NetworkDiagnosticsStore.recordVoIPPush()
             do {
                 let call = try IncomingVoIPCall(userInfo: userInfo)
                 CallKitController.shared.reportRequiredVoIPPush(call) { error in

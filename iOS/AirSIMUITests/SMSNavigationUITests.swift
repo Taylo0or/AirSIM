@@ -408,6 +408,36 @@ final class SMSNavigationUITests: XCTestCase {
         }
     }
 
+    /// Exact service numbers get a logo in the list and thread header; 我的 › 网络诊断 opens.
+    @MainActor func testServiceLogosAndNetworkDiagnostics() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchFixture(["AIRSIM_UI_WARM": "1"])
+        defer { app.terminate() }
+        XCTAssertTrue(app.shell("短信").waitForExistence(timeout: 10))
+        app.shell("短信").tap()
+        let mobile = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "中国移动，10086")).firstMatch
+        XCTAssertTrue(mobile.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "工商银行，95588")).firstMatch.exists)
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "中国移动，22922")).firstMatch.exists)
+        keep(app, "sms-service-logos")
+        mobile.tap()
+        XCTAssertTrue(app.navigationBars["10086"].waitForExistence(timeout: 5))
+        keep(app, "sms-service-thread")
+        app.navigationBars.buttons.firstMatch.tap()
+        app.shell("我的").tap()
+        let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "网络诊断")).firstMatch
+        let tabTop = app.shell("我的").frame.minY
+        for _ in 0..<6 where !(row.exists && row.frame.maxY < tabTop) { app.swipeUp() }
+        row.tap()
+        XCTAssertTrue(app.navigationBars["网络诊断"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["本机网络"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["当前线路"].waitForExistence(timeout: 10))
+        keep(app, "network-diagnostics")
+        app.swipeUp()
+        keep(app, "network-diagnostics-bottom")
+    }
+
     /// The shell's four tabs and the calls segments (首页 / 通话 / 短信 / 我的).
     @MainActor func testShellTabsAndCallSegments() throws {
         continueAfterFailure = false

@@ -401,7 +401,7 @@ enum AirSIMSettingsPage: Hashable, Identifiable {
     case device(String), deviceInfo(String)
     case status, network, prefixes, bluetooth, bluetoothPair, bluetoothStatus, relay, tls, tlsGuide
     case calls, background, forwarding, widgets, order, widgetGuide, islandGuide
-    case preferences, accessibility, help, diagnostics, localCheck, cloudCheck, permissions
+    case preferences, accessibility, help, diagnostics, networkDiagnostics, localCheck, cloudCheck, permissions
     case logs, feedback, feedbackPreview, guide, networkGuide, about
 
     var id: String {
@@ -443,6 +443,7 @@ enum AirSIMSettingsPage: Hashable, Identifiable {
         case .accessibility: return "语言与辅助功能"
         case .help: return "帮助与诊断"
         case .diagnostics: return "检查连接"
+        case .networkDiagnostics: return "网络诊断"
         case .localCheck: return "本地连接检查"
         case .cloudCheck: return "云端连接自检"
         case .permissions: return "系统权限"
@@ -904,11 +905,18 @@ struct AirSIMSettingsView: View {
             }
             Section { link(.accessibility, "accessibility") }
         case .help:
-            Section { link(.diagnostics, "stethoscope", detail: "本地、蓝牙与云端状态"); link(.permissions, "hand.raised") }
+            Section {
+                link(.networkDiagnostics, "network", detail: "本机网络、Relay、线路与推送")
+                link(.diagnostics, "stethoscope", detail: "本地、蓝牙与云端状态")
+                link(.permissions, "hand.raised")
+            }
             Section { link(.logs, "doc.text.magnifyingglass"); link(.feedback, "bubble.left.and.bubble.right") }
             Section { link(.guide, "book") }
+        case .networkDiagnostics:
+            NetworkDiagnosticsSections()
         case .diagnostics:
             Section {
+                link(.networkDiagnostics, "network")
                 link(.localCheck, "wifi")
                 link(.bluetoothStatus, "wave.3.right")
                 link(.cloudCheck, "cloud", detail: pureLocalEnabled ? "纯本地模式下不可运行" : nil)

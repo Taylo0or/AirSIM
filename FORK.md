@@ -13,6 +13,10 @@
 | Relay | 短信事件可带 `attachments`（≤3 个 https 附件：彩信图片 / 语音留言），`send_sms` 可带 `media_ids`（有图时正文可空） |
 | iOS | voip.ms 线路（agent_kind `voipms`，桥接在 `~/airsim-voipms`）：气泡内显示彩信图片（QuickLook 预览）和语音留言播放；会话输入栏可选图发彩信，图片先上传到 `<relay>/voipms/media` |
 | iOS | 界面换成新外壳（首页 / 通话 / 短信 / 我的，`WarmShellViews.swift`），设计稿由 Codex 出（`docs/design/warm-2026-11-20/`）；原上游五标签界面已删除。主题（暖橙 / 墨绿 / 天蓝）只切换这套界面的强调色 |
+| iOS | voip.ms 来电接听不再等本地路由（云端专用线路直接走 Relay 媒体） |
+| Android | 远端静默模式来电不亮屏（不再发全屏 intent / turnScreenOn）；通话期间的应用唤醒由 root/Shizuku 助手熄回（需 `dumpsys power` 有 `mLastWakeReason`，K40 的 Android 13 没有，按设计不动作）。移植自 2020cqyd 的 PR `codex/300-network-call-sms-followup` |
+| iOS | 运营商 / 银行 / 快递服务号码在短信列表和会话标题显示图标，只精确匹配（`SMSServiceBrand.swift`，来源见 `docs/SMSCarrierIcons.md`，移植自同一 PR） |
+| iOS | 网络诊断页（我的 › 网络诊断）：本机网络 / VPN、Relay 往返延迟、各线路 Relay 心跳、局域网直连、通知权限、最近来电 / 短信推送及短信到达耗时，一键重连并同步短信（参考同一 PR，基于本仓库已有接口重写） |
 
 ## 构建
 
