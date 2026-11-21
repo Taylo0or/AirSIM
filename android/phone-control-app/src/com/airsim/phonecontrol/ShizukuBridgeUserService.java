@@ -85,6 +85,8 @@ public final class ShizukuBridgeUserService extends Binder {
                 case PrivilegedBridgeProtocol.TRANSACTION_SET_LOCAL_OUTPUT_POLICY ->
                         setLocalOutputMuted(data.readInt() != 0, data.readString(), data.readString());
                 case PrivilegedBridgeProtocol.TRANSACTION_ENSURE_DIALER_ROLE -> ensureDialerRole();
+                case PrivilegedBridgeProtocol.TRANSACTION_RESTORE_REMOTE_SCREEN_OFF ->
+                        restoreRemoteScreenOff(data.readLong(), data.readLong());
                 case PrivilegedBridgeProtocol.TRANSACTION_AUDIO_SNAPSHOT -> audioSnapshot();
                 case PrivilegedBridgeProtocol.TRANSACTION_SEND_SMS ->
                         sendSms(data.readString(), data.readString(), data.readInt());
@@ -496,6 +498,38 @@ public final class ShizukuBridgeUserService extends Binder {
             throw new IOException("dialer role was not applied by the system");
         }
         return "dialer_role=granted verified=true";
+    }
+
+    /**
+     * Puts the screen back to sleep only when the latest wake was an application wake
+     * caused by a remote-silent call that started screen-off. Power-button, wake-key and
+     * biometric wakes, newer wakes, and builds without wake-reason evidence are left alone.
+     */
+    private String restoreRemoteScreenOff(long since, long observedAt) throws Exception {
+        verifyIdentity();
+        long identity = Binder.clearCallingIdentity();
+        try {
+            Class<?> api = Class.forName("android.os.IPowerManager");
+            Object binder = Class.forName("android.os.ServiceManager")
+                    .getMethod("getService", String.class).invoke(null, "power");
+            Object power = Class.forName("android.os.IPowerManager$Stub")
+                    .getMethod("asInterface", IBinder.class).invoke(null, binder);
+            if (!Boolean.TRUE.equals(api.getMethod("isInteractive").invoke(power))) return "screen_guard=already_off";
+            RemoteCallScreenPolicy.Wake wake;
+            try { wake = RemoteCallScreenPolicy.parse(runCommand(new String[]{"dumpsys", "power"})); }
+            catch (IllegalArgumentException missing) { return "screen_guard=no_wake_evidence"; }
+            long now = android.os.SystemClock.uptimeMillis();
+            if (wake.reason() != RemoteCallScreenPolicy.WAKE_REASON_APPLICATION) return "screen_guard=user_override";
+            if (observedAt < since || observedAt > now || wake.time() > observedAt) return "screen_guard=newer_wake";
+            if (!RemoteCallScreenPolicy.suppress(wake, since, now)) return "screen_guard=unrelated_wake";
+            // Check again immediately before sleeping so a newer power-key wake wins.
+            RemoteCallScreenPolicy.Wake latest = RemoteCallScreenPolicy.parse(runCommand(new String[]{"dumpsys", "power"}));
+            if (latest.time() != wake.time() || latest.reason() != RemoteCallScreenPolicy.WAKE_REASON_APPLICATION)
+                return "screen_guard=user_override";
+            api.getMethod("goToSleep", long.class, int.class, int.class)
+                    .invoke(power, android.os.SystemClock.uptimeMillis(), 0, 0);
+            return "screen_guard=sleep_requested";
+        } finally { Binder.restoreCallingIdentity(identity); }
     }
 
     private String runCommand(String[] command) throws Exception {

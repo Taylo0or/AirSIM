@@ -45,6 +45,7 @@ public final class AirSIMInCallService extends InCallService {
 		instance = this;
 		if (localAudio == null) localAudio = new LocalCallAudioController(this);
         String callId = CallRepository.add(call);
+        RemoteCallScreenGuard.get(this).added(callId, "incoming".equals(direction(call)));
         BridgeLog.info("telecom_call_added call_id=" + DebugRedactor.safeIdentifier(callId)
                 + " direction=" + direction(call) + " state=" + TelecomStateMapper.toWireState(call.getState()));
         Call.Callback callback = new Call.Callback() {
@@ -55,7 +56,8 @@ public final class AirSIMInCallService extends InCallService {
         call.registerCallback(callback);
         AgentWatchdogService.start(this);
         emit(call, call.getState());
-        if ("incoming".equals(direction(call)) && call.getState() == Call.STATE_RINGING) {
+        if ("incoming".equals(direction(call)) && call.getState() == Call.STATE_RINGING
+                && BridgeNotification.wakesForCalls(this, AppConfig.mode(this))) {
             showFullScreenIncoming(callId);
         }
     }
@@ -79,6 +81,7 @@ public final class AirSIMInCallService extends InCallService {
         Call.Callback callback = callbacks.remove(call);
         if (callback != null) call.unregisterCallback(callback);
         CallRepository.remove(call);
+        RemoteCallScreenGuard.get(this).removed(callId);
         BridgeNotification.clearCall(this, callId);
         super.onCallRemoved(call);
     }
@@ -152,6 +155,10 @@ public final class AirSIMInCallService extends InCallService {
         BridgeLog.info("local_audio_policy mode=" + AppConfig.mode(this)
                 + " silence=" + shouldSilence);
         localAudio.update(shouldSilence, policyTransport);
+        if (callStates.size() == 1) {
+            String displayCall = CallRepository.id(callStates.keySet().iterator().next());
+            RemoteCallScreenGuard.get(this).ownership(displayCall, shouldSilence);
+        }
         // Multiple native calls cannot safely share a global mute-repair decision.
         localAudio.updateWatchdog(shouldSilence,
                 liveCalls.toString() + transports, transports);

@@ -370,6 +370,11 @@ mkdir -p "$PCM_OUT"
 "$JAVA" -cp "$PCM_OUT:$OUT:$ANDROID_JAR" com.airsim.phonecontrol.EarlyMediaRelayIntegrationTests
 "$JAVA" -cp "$PCM_OUT:$OUT:$ANDROID_JAR" com.airsim.phonecontrol.WatchMediaRelayIntegrationTests
 
+"$JAVAC" --release 17 -d "$OUT" \
+  "$ROOT"/src/com/airsim/phonecontrol/RemoteCallScreenPolicy.java \
+  "$ROOT"/test/com/airsim/phonecontrol/RemoteCallScreenPolicyTests.java
+"$JAVA" -cp "$OUT" com.airsim.phonecontrol.RemoteCallScreenPolicyTests
+
 sh "$ROOT/test-audio-policy.sh"
 
 sh "$ROOT/test-privileged-sms.sh"

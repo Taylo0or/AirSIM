@@ -605,6 +605,26 @@ final class ShizukuBridgeManager {
         });
     }
 
+    private final ExecutorService screenWorker = Executors.newSingleThreadExecutor();
+
+    /** Asks the root/Shizuku helper to undo an application wake caused by a remote-silent call. */
+    void restoreRemoteScreenOff(long since, java.util.function.BooleanSupplier current,
+                                java.util.function.Consumer<String> completed) {
+        long observedAt = android.os.SystemClock.uptimeMillis();
+        screenWorker.execute(() -> {
+            String result = "screen_guard=unavailable";
+            try {
+                RootBridgeTransport root = rootTransport;
+                PrivilegedBridgeClient client = privilegedClient;
+                if (!current.getAsBoolean()) result = "screen_guard=cancelled";
+                else if (root != null) result = root.restoreRemoteScreenOff(since, observedAt);
+                else if (client != null) result = client.restoreRemoteScreenOff(since, observedAt);
+            } catch (Exception error) { result = "screen_guard=failed_" + error.getClass().getSimpleName(); }
+            String value = result == null ? "screen_guard=unavailable" : result;
+            mainHandler.post(() -> completed.accept(value));
+        });
+    }
+
     void setLocalOutputMuted(boolean muted) {
         setLocalOutputMuted(muted, PrivilegedBridgeProtocol.TRANSPORT_VOWLAN);
     }

@@ -159,6 +159,11 @@ public final class RootBridgeMain {
                 }
                 case "audio_snapshot" -> code = PrivilegedBridgeProtocol.TRANSACTION_AUDIO_SNAPSHOT;
                 case "ensure_dialer_role" -> code = PrivilegedBridgeProtocol.TRANSACTION_ENSURE_DIALER_ROLE;
+                case "restore_remote_screen_off" -> {
+                    code = PrivilegedBridgeProtocol.TRANSACTION_RESTORE_REMOTE_SCREEN_OFF;
+                    data.writeLong(request.optLong("since", -1));
+                    data.writeLong(request.optLong("observed_at", -1));
+                }
                 case "send_sms" -> {
                     code = PrivilegedBridgeProtocol.TRANSACTION_SEND_SMS;
                     data.writeString(request.optString("destination", ""));
