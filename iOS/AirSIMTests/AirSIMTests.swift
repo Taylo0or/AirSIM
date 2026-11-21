@@ -451,16 +451,36 @@ final class TunnelRecoveryRegressionTests: XCTestCase {
         XCTAssertEqual(starts, 1, "Foreground, discovery and watchdog must not invalidate each other's signed probe")
     }
 
-    func testSavedTailnetRouteIsNotReplacedByLANAdvertisementDuringVerification() throws {
+    func testSameSubnetAdvertisementPrecedesAnUnverifiedTailnetRoute() throws {
         let vpn = VoWLANManualRoute(agentID: "peer", host: "100.64.1.2", controlPort: 7592, pcmPort: 7593)
         let lan = VoWLANDiscoveredAgent(id: "peer",
             endpoint: try .init(host: "192.168.31.203", controlPort: 7592, pcmPort: 7593),
             deviceName: "Phone", manufacturer: nil, model: nil, phoneNumber: nil, agentKind: nil)
         XCTAssertEqual(VoWLANRouteCandidates.merge(discovered: [lan], manual: [vpn],
-            live: [], preferred: nil).first?.endpoint, vpn.endpoint)
+            live: [], preferred: nil, canProbeLAN: { $0 == lan.endpoint }).first?.endpoint, lan.endpoint)
         XCTAssertEqual(VoWLANRouteCandidates.merge(discovered: [lan], manual: [vpn],
-            live: [lan], preferred: lan.endpoint).first?.endpoint, lan.endpoint,
-            "An already verified LAN route or active call must remain stable")
+            live: [], preferred: nil, canProbeLAN: { _ in false }).first?.endpoint, vpn.endpoint,
+            "Keep probing Tailnet when the LAN address is off-subnet or in backoff")
+        XCTAssertEqual(VoWLANRouteCandidates.merge(discovered: [lan], manual: [vpn],
+            live: [lan], preferred: vpn.endpoint, canProbeLAN: { $0 == lan.endpoint }).first?.endpoint, vpn.endpoint,
+            "Keep a verified or locked route during browsing")
+    }
+
+    func testCachedSameSubnetAddressCanBeProbedBeforeBonjourReturns() throws {
+        let vpn = VoWLANManualRoute(agentID: "peer", host: "100.64.1.2", controlPort: 7592, pcmPort: 7593)
+        let cached = try VoWLANEndpoint(host: "192.168.31.203", controlPort: 7592, pcmPort: 7593)
+        let now = Date()
+        let pairing = VoWLANPairingRecord(id: "pair", agentID: vpn.agentID, deviceName: "Phone",
+            createdAt: now, lastSeenAt: now, endpoints: [.init(cached), .init(try XCTUnwrap(vpn.endpoint))])
+        let canProbeLAN: (VoWLANEndpoint) -> Bool = { $0 == cached }
+
+        let candidates = VoWLANRouteCandidates.cachedLANAgents(
+            pairings: [pairing], manual: [vpn], canProbeLAN: canProbeLAN)
+        XCTAssertEqual(VoWLANRouteCandidates.merge(discovered: candidates, manual: [vpn],
+            live: [], preferred: nil, canProbeLAN: canProbeLAN).first?.endpoint, cached)
+        XCTAssertFalse(VoWLANAvailability.discovered(cached, at: now).isReady(at: now))
+        XCTAssertTrue(VoWLANRouteCandidates.cachedLANAgents(
+            pairings: [pairing], manual: [vpn], canProbeLAN: { _ in false }).isEmpty)
     }
 
     func testNetworkChangeKeepsPairedVPNCandidatesOutsideCGNAT() throws {
@@ -6242,28 +6262,28 @@ final class IncomingAnswerRoutePolicyTests: XCTestCase {
     }
 }
 
-final class SMSServiceBrandTests: XCTestCase {
+final class SMSCarrierBrandTests: XCTestCase {
     func testEveryBrandHasBundledLogo() {
-        for brand in SMSServiceBrand.allCases {
+        for brand in SMSCarrierBrand.allCases {
             XCTAssertNotNil(UIImage(named: brand.rawValue), brand.rawValue)
             XCTAssertFalse(brand.displayName.isEmpty)
         }
     }
 
     func testExactServiceNumbersOnly() {
-        XCTAssertEqual(SMSServiceBrand.match("10086"), .mobile)
-        XCTAssertEqual(SMSServiceBrand.match(" +86 10086 "), .mobile)
-        XCTAssertEqual(SMSServiceBrand.match("008695588"), .icbc)
-        XCTAssertEqual(SMSServiceBrand.match("1069095599"), .abc)
-        XCTAssertEqual(SMSServiceBrand.match("1065795555"), .cmb)
-        XCTAssertEqual(SMSServiceBrand.match("106901195568"), .minsheng)
-        XCTAssertEqual(SMSServiceBrand.match("950616"), .jd)
-        XCTAssertNil(SMSServiceBrand.match("100861"), "prefix is not identity")
-        XCTAssertNil(SMSServiceBrand.match("1008"))
-        XCTAssertNil(SMSServiceBrand.match("+110086"), "foreign country code")
-        XCTAssertNil(SMSServiceBrand.match("10086a"))
-        XCTAssertNil(SMSServiceBrand.match("中国移动"))
-        XCTAssertNil(SMSServiceBrand.match(""))
+        XCTAssertEqual(SMSCarrierBrand.match("10086"), .mobile)
+        XCTAssertEqual(SMSCarrierBrand.match(" +86 10086 "), .mobile)
+        XCTAssertEqual(SMSCarrierBrand.match("008695588"), .icbc)
+        XCTAssertEqual(SMSCarrierBrand.match("1069095599"), .abc)
+        XCTAssertEqual(SMSCarrierBrand.match("1065795555"), .cmb)
+        XCTAssertEqual(SMSCarrierBrand.match("106901195568"), .minsheng)
+        XCTAssertEqual(SMSCarrierBrand.match("950616"), .jd)
+        XCTAssertNil(SMSCarrierBrand.match("100861"), "prefix is not identity")
+        XCTAssertNil(SMSCarrierBrand.match("1008"))
+        XCTAssertNil(SMSCarrierBrand.match("+110086"), "foreign country code")
+        XCTAssertNil(SMSCarrierBrand.match("10086a"))
+        XCTAssertNil(SMSCarrierBrand.match("中国移动"))
+        XCTAssertNil(SMSCarrierBrand.match(""))
     }
 }
 
@@ -6290,5 +6310,146 @@ final class NetworkDiagnosticsTests: XCTestCase {
         XCTAssertEqual(NetworkDiagnosticsCopy.delay(sms.delay), "约 3 秒")
         XCTAssertEqual(NetworkDiagnosticsCopy.delay(-5), "时钟偏差，无法估算")
         defaults.removePersistentDomain(forName: "NetworkDiagnosticsTests")
+    }
+}
+
+final class SIMSignalDisplayTests: XCTestCase {
+    func testDualSIMMappingAndLegacyDecode() throws {
+        let json = #"[{"id":"b","label":"secondary","slot_index":1,"signal":{"level":1,"observed_at_ms":1795150000000}},{"id":"a","label":"primary","slot_index":0,"signal":{"level":4,"observed_at_ms":1795150000000}}]"#
+        let slots = try JSONDecoder().decode([AndroidSIMSlot].self, from: Data(json.utf8))
+        let summaries = AndroidSIMSlot.signalSummaries(slots)
+        XCTAssertEqual(summaries.map(\.title), ["SIM 1", "SIM 2"])
+        XCTAssertEqual(summaries.map { $0.signal?.level }, [4, 1])
+        XCTAssertEqual(AndroidSIMSlot.signalSummaries(slots + slots).count, 2)
+        XCTAssertTrue(AndroidSIMSlot.signalSummaries([]).isEmpty)
+        let old = try JSONDecoder().decode(AndroidSIMSlot.self, from: Data(#"{"id":"old","label":"SIM"}"#.utf8))
+        XCTAssertNil(old.signal)
+        XCTAssertNil(AndroidSIMSlot.signalSummaries([old]).first?.signal)
+    }
+
+    func testUnknownIsDistinctFromZeroAndMalformedSignalDoesNotHideSIM() throws {
+        let now = Date(timeIntervalSince1970: 1795150000)
+        XCTAssertEqual(AndroidSIMSignal(level: 0, observedAtMS: 1795150000000).freshLevel(at: now), 0)
+        for level in [-1, 5] {
+            XCTAssertNil(AndroidSIMSignal(level: level, observedAtMS: 1795150000000).freshLevel(at: now))
+        }
+        let slot = try JSONDecoder().decode(AndroidSIMSlot.self, from: Data(#"{"id":"a","label":"SIM","signal":{"level":"bad","observed_at_ms":0}}"#.utf8))
+        XCTAssertEqual(slot.id, "a")
+        XCTAssertNil(slot.signal?.freshLevel(at: now))
+    }
+
+    func testSignalExpiresAndRejectsFutureSample() {
+        let now = Date(timeIntervalSince1970: 1795150000)
+        let signal = AndroidSIMSignal(level: 3, observedAtMS: 1795150000000)
+        XCTAssertEqual(signal.freshLevel(at: now.addingTimeInterval(299)), 3)
+        XCTAssertNil(signal.freshLevel(at: now.addingTimeInterval(300)))
+        XCTAssertNil(signal.freshLevel(at: now.addingTimeInterval(-61)))
+    }
+
+    func testWidgetRoundTripExpiryAndOldSnapshot() throws {
+        let now = Date(timeIntervalSince1970: 1795150000)
+        var snapshot = AirSIMWidgetSnapshot.preview(at: now)
+        snapshot.devices[0].simSignals = [
+            .init(id:0,title:"SIM 1",signal:.init(level:4,observedAtMS:1795150000000)),
+            .init(id:1,title:"SIM 2",signal:.init(level:1,observedAtMS:1795149990000))]
+        XCTAssertEqual(try JSONDecoder().decode(AirSIMWidgetSnapshot.self, from: JSONEncoder().encode(snapshot)), snapshot)
+        XCTAssertTrue(snapshot.expirationDates(after: now).contains(now.addingTimeInterval(290)))
+        let old = try JSONDecoder().decode(AirSIMWidgetSnapshot.Device.self, from: Data(#"{"id":"old","name":"old","transport":"VoBLE","recentlyReachable":true}"#.utf8))
+        XCTAssertNil(old.simSignals)
+    }
+
+    func testLiveActivityStaleClearsSignalWithoutMarkingDeviceOffline() throws {
+        let agent = AirSIMCallActivityAttributes.ContentState.AgentSummary(id:"a",name:"Phone",phoneNumber:nil,agentKind:nil,
+            vowlanOnline:false,bluetoothOnline:true,cloudOnline:false,isCurrent:true,
+            simSignals:[.init(id:0,title:"SIM 1",signal:.init(level:2,observedAtMS:1795150000000))])
+        let state = AirSIMCallActivityAttributes.ContentState(callID:"",number:"",displayName:"Phone",phase:.standby,
+            startedAt:Date(),transport:.bluetooth,agents:[agent])
+        XCTAssertEqual(state.simSignalExpirationDate?.timeIntervalSince1970, 1795150300)
+        let stale = state.liveActivityDisplayState(isStale:true)
+        XCTAssertEqual(stale.phase, .standby)
+        XCTAssertEqual(stale.agents?.first?.bluetoothOnline, true)
+        XCTAssertNil(stale.agents?.first?.simSignals?.first?.signal)
+        XCTAssertEqual(state.liveActivityDisplayState(isStale:false), state)
+        XCTAssertEqual(try JSONDecoder().decode(AirSIMCallActivityAttributes.ContentState.self,
+            from: JSONEncoder().encode(state)), state)
+    }
+}
+
+final class VoWLANLANFirstIntegrationTests: XCTestCase {
+    private func endpoint(_ host: String, tls: Bool = false) throws -> VoWLANEndpoint {
+        try .init(host: host, controlPort: 7592, pcmPort: 7593, usesTLS: tls)
+    }
+    private func agent(_ endpoint: VoWLANEndpoint, id: String = "peer") -> VoWLANDiscoveredAgent {
+        .init(id: id, endpoint: endpoint, deviceName: id, manufacturer: nil, model: nil,
+              phoneNumber: nil, agentKind: nil)
+    }
+    private var vpn: VoWLANManualRoute {
+        .init(agentID: "peer", host: "100.64.1.2", controlPort: 7592, pcmPort: 7593)
+    }
+    private func pairing(_ endpoints: [VoWLANEndpoint], id: String = "peer") -> VoWLANPairingRecord {
+        .init(id: "pair-\(id)", agentID: id, deviceName: id, createdAt: Date(), lastSeenAt: Date(),
+              endpoints: endpoints.map { .init($0) })
+    }
+    func testSameSubnetBonjourFirstAndTailnetFallback() throws {
+        let lan = try endpoint("192.168.31.20")
+        XCTAssertEqual(VoWLANRouteCandidates.merge(discovered: [agent(lan)], manual: [vpn],
+            live: [], preferred: nil, canProbeLAN: { $0 == lan }).first?.endpoint, lan)
+        XCTAssertEqual(VoWLANRouteCandidates.merge(discovered: [agent(lan)], manual: [vpn],
+            live: [], preferred: nil, canProbeLAN: { _ in false }).first?.endpoint, vpn.endpoint)
+    }
+    func testCachedLANReplacesOffSubnetOrFailedBonjour() throws {
+        let stale = try endpoint("192.168.2.20"), cached = try endpoint("192.168.31.20")
+        let history = VoWLANRouteCandidates.cachedLANAgents(pairings: [pairing([cached])],
+            manual: [vpn], canProbeLAN: { $0 == cached })
+        XCTAssertEqual(VoWLANRouteCandidates.merge(discovered: [agent(stale)] + history,
+            manual: [vpn], live: [], preferred: nil, canProbeLAN: { $0 == cached }).first?.endpoint, cached)
+    }
+    func testFreshSameSubnetBonjourWinsOverCachedLAN() throws {
+        let fresh = try endpoint("192.168.31.21"), cached = try endpoint("192.168.31.20")
+        XCTAssertEqual(VoWLANRouteCandidates.merge(discovered: [agent(fresh), agent(cached)],
+            manual: [vpn], live: [], preferred: nil, canProbeLAN: { _ in true }).first?.endpoint, fresh)
+    }
+    func testVerifiedOrCallLockedCachedLANSurvivesNewBonjour() throws {
+        let current = try endpoint("192.168.31.20"), next = try endpoint("192.168.31.21")
+        for eligible in [true, false] {
+            XCTAssertEqual(VoWLANRouteCandidates.merge(discovered: [agent(next)], manual: [vpn],
+                live: [agent(current)], preferred: current, canProbeLAN: { _ in eligible }).first?.endpoint, current)
+        }
+    }
+    func testVerifiedTailnetAndTLSPreserveRoute() throws {
+        let lan = try endpoint("192.168.31.20")
+        let tls = VoWLANManualRoute(agentID: "peer", host: "gateway.example.com", controlPort: 443, pcmPort: 443, tls: true)
+        for route in [vpn, tls] {
+            let current = try XCTUnwrap(route.endpoint)
+            XCTAssertEqual(VoWLANRouteCandidates.merge(discovered: [agent(lan)], manual: [vpn, tls],
+                live: [agent(current)], preferred: current, canProbeLAN: { _ in true }).first?.endpoint, current)
+        }
+    }
+    func testCachedLANUsesNewestEligibleAddressAndExcludesTLS() throws {
+        let older = try endpoint("192.168.31.20"), latest = try endpoint("192.168.31.21")
+        let tls = try endpoint("gateway.example.com", tls: true)
+        let saved = pairing([older, latest, try XCTUnwrap(vpn.endpoint), tls])
+        XCTAssertEqual(VoWLANRouteCandidates.cachedLANAgents(pairings: [saved], manual: [vpn],
+            canProbeLAN: { _ in true }).first?.endpoint, latest)
+        XCTAssertEqual(VoWLANRouteCandidates.cachedLANAgents(pairings: [saved], manual: [vpn],
+            canProbeLAN: { $0 == older }).first?.endpoint, older)
+        XCTAssertTrue(VoWLANRouteCandidates.cachedLANAgents(pairings: [saved], manual: [vpn],
+            canProbeLAN: { _ in false }).isEmpty)
+    }
+    func testHistoryCannotCrossAgentOrRestoreUnpermittedPeer() throws {
+        let lan = try endpoint("192.168.31.20")
+        XCTAssertTrue(VoWLANRouteCandidates.cachedLANAgents(pairings: [pairing([lan], id: "other")],
+            manual: [vpn], canProbeLAN: { _ in true }).isEmpty)
+        XCTAssertTrue(VoWLANRouteCandidates.cachedLANAgents(pairings: [pairing([lan])],
+            manual: [], canProbeLAN: { _ in true }).isEmpty)
+        XCTAssertTrue(VoWLANRouteCandidates.merge(discovered: [], manual: [], live: [agent(lan)],
+            preferred: lan, canProbeLAN: { _ in true }).isEmpty)
+    }
+    func testLANFailureFallsBackOnlyToSameAgentAndNoLoop() throws {
+        let lan = try endpoint("192.168.31.20")
+        let other = VoWLANManualRoute(agentID: "other", host: "100.64.1.3", controlPort: 7592, pcmPort: 7593)
+        XCTAssertEqual(VoWLANRouteCandidates.alternateManualRoute([other, vpn], agentID: "peer", failed: lan), vpn)
+        XCTAssertNil(VoWLANRouteCandidates.alternateManualRoute([other, vpn], agentID: "peer", failed: lan,
+            attempted: [try XCTUnwrap(vpn.endpoint)]))
     }
 }

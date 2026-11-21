@@ -51,6 +51,7 @@ struct RootView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var appUpdatePresentation: AppUpdatePresentation?
     @AppStorage("airsim.selected-tab") private var selectedTabRawValue = PhoneTab.home.rawValue
+    @State private var collapsedCallID: String?
     @State private var callbackSIMRequest: CallbackSIMDialRequest?
     @State private var pendingSMSRecipient: String?
     @State private var conversationSender: String?
@@ -65,20 +66,55 @@ struct RootView: View {
         return model.inAppPresentedCall
     }
 
+    private func callReturnBar(_ call: CallRecord) -> some View {
+        Button { collapsedCallID = nil } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "phone.fill")
+                Text("返回通话")
+                Text(model.contacts.displayName(for: call.number)).monospacedDigit().lineLimit(1)
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.up")
+            }
+            .font(.subheadline.weight(.semibold))
+            .padding(.horizontal, 16).padding(.vertical, 10)
+            .foregroundStyle(.white)
+            .background(Color.green, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 16).padding(.top, 4).padding(.bottom, 6)
+        .background(Color(uiColor: WarmPalette.background))
+        .accessibilityIdentifier("call.restore")
+    }
+
+    private var callSurfaceVisible: Bool {
+        guard let call = presentedCall else { return false }
+        // A new incoming state must never remain hidden by an earlier collapse.
+        return CallSurfaceContent(state: call.state).phase == .incoming || collapsedCallID != call.id
+    }
+
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            WarmShellView(phoneTab: tabBinding, pendingSMSRecipient: $pendingSMSRecipient,
-                          conversationSender: $conversationSender, showingConversation: $showingConversation,
-                          onCall: dial, onMessage: composeMessage, openConversation: showSMSConversation)
+            VStack(spacing: 0) {
+                // A collapsed call pushes the shell down instead of covering its page titles.
+                if let call = presentedCall, !callSurfaceVisible { callReturnBar(call) }
+                WarmShellView(phoneTab: tabBinding, pendingSMSRecipient: $pendingSMSRecipient,
+                              conversationSender: $conversationSender, showingConversation: $showingConversation,
+                              onCall: dial, onMessage: composeMessage, openConversation: showSMSConversation)
+            }
                 // Keep navigation state, but hide the shell from rendering, hit testing
                 // and VoiceOver while the in-app call surface is on top.
-                .opacity(presentedCall == nil ? 1 : 0)
-                .allowsHitTesting(presentedCall == nil)
-                .accessibilityHidden(presentedCall != nil)
+                .opacity(callSurfaceVisible ? 0 : 1)
+                .allowsHitTesting(!callSurfaceVisible)
+                .accessibilityHidden(callSurfaceVisible)
                 .tint(settings.theme.accent)
 
             if let call = presentedCall {
-                ActiveCallView(call: call)
+                ActiveCallView(call: call, isPresented: callSurfaceVisible,
+                               onMinimize: { collapsedCallID = call.id })
+                    // Keep the same call view mounted; collapse changes presentation only.
+                    .opacity(callSurfaceVisible ? 1 : 0)
+                    .allowsHitTesting(callSurfaceVisible)
+                    .accessibilityHidden(!callSurfaceVisible)
                     .zIndex(1)
                     .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.98)))
             }
@@ -90,6 +126,7 @@ struct RootView: View {
         }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: model.inAppPresentedCall?.id)
         .preferredColorScheme(settings.appearance.colorScheme)
+        .onChange(of: presentedCall?.id) { _ in collapsedCallID = nil }
         .safeAreaInset(edge: .top, spacing: 0) {
             if let reminder = model.otherDeviceCallReminders.first {
                 Button {

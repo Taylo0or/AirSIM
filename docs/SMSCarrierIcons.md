@@ -42,3 +42,7 @@ YTO override: domestic symbol cropped from the official footer artwork at https:
 - Minsheng: https://wap.cmbc.com.cn/sy/zygg/2024/1015625257135490.htm and https://wap.cmbc.com.cn/sy/zygg/2025/1148544611125837.htm and https://wap.cmbc.com.cn/sy/zygg/2020/211469161-548312.htm
 - CMB symbol cropped from official site header: https://wwwcdn.cmbimg.cn/Images/logo.png
 - Minsheng SVG symbol: https://companieslogo.com/china-minsheng-bank/logo/
+
+## AirSIM UI-only integration
+
+Artwork and exact display mapping adapted from 2020cqyd/AirSIM PR #47, commit b8a9bac685c4c33f5ebbc4fd641b5da7677e3086. Shared catalog used by iPhone and Watch. This does not change SMS transport, identity, encryption, or authorization.

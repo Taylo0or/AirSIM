@@ -1760,11 +1760,33 @@ struct WarmMessagesView: View {
     }
 }
 
+extension SMSCarrierBrand {
+    /// Spoken with the number (VoiceOver), since the logo itself is decorative.
+    var displayName: String {
+        switch self {
+        case .mobile: return "中国移动"
+        case .unicom: return "中国联通"
+        case .telecom: return "中国电信"
+        case .icbc: return "工商银行"
+        case .ccb: return "建设银行"
+        case .abc: return "农业银行"
+        case .boc: return "中国银行"
+        case .bocom: return "交通银行"
+        case .cmb: return "招商银行"
+        case .minsheng: return "民生银行"
+        case .sf: return "顺丰速运"
+        case .jd: return "京东物流"
+        case .zto: return "中通快递"
+        case .yto: return "圆通速递"
+        }
+    }
+}
+
 /// Conversation avatar: contact photo › service logo › contact initial › person glyph.
 struct WarmSMSAvatar: View {
     let name: String?
     let photoData: Data?
-    let brand: SMSServiceBrand?
+    let brand: SMSCarrierBrand?
     @ScaledMetric(relativeTo: .body) private var side: CGFloat = 44
 
     var body: some View {
@@ -1803,7 +1825,7 @@ private struct WarmConversationRow: View {
         let latest = messages.last
         let unread = messages.contains { model.unreadMessageIDs.contains($0.id) }
         let contact = contacts.contact(for: sender)
-        let brand = contact == nil ? SMSServiceBrand.match(sender) : nil
+        let brand = contact == nil ? SMSCarrierBrand.match(sender) : nil
         let name = contact?.name ?? WarmPhone.format(sender)
         Button(action: open) {
             HStack(alignment: .center, spacing: 8) {

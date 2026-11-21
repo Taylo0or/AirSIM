@@ -15,8 +15,18 @@
 | iOS | 界面换成新外壳（首页 / 通话 / 短信 / 我的，`WarmShellViews.swift`），设计稿由 Codex 出（`docs/design/warm-2026-11-20/`）；原上游五标签界面已删除。主题（暖橙 / 墨绿 / 天蓝）只切换这套界面的强调色 |
 | iOS | voip.ms 来电接听不再等本地路由（云端专用线路直接走 Relay 媒体） |
 | Android | 远端静默模式来电不亮屏（不再发全屏 intent / turnScreenOn）；通话期间的应用唤醒由 root/Shizuku 助手熄回（需 `dumpsys power` 有 `mLastWakeReason`，K40 的 Android 13 没有，按设计不动作）。移植自 2020cqyd 的 PR `codex/300-network-call-sms-followup` |
-| iOS | 运营商 / 银行 / 快递服务号码在短信列表和会话标题显示图标，只精确匹配（`SMSServiceBrand.swift`，来源见 `docs/SMSCarrierIcons.md`，移植自同一 PR） |
+| iOS | 短信会话行带头像（联系人照片 › 服务号图标 › 姓名首字 › 人形）。服务号图标与号码表自 v0.9.8.26 起用上游的 `SMSCarrierBrand` / `SMSServiceAssets`（来源见 `docs/SMSCarrierIcons.md`），本仓库只加了中文品牌名给 VoiceOver |
 | iOS | 网络诊断页（我的 › 网络诊断）：本机网络 / VPN、Relay 往返延迟、各线路 Relay 心跳、局域网直连、通知权限、最近来电 / 短信推送及短信到达耗时，一键重连并同步短信（参考同一 PR，基于本仓库已有接口重写） |
+
+## 上游同步记录
+
+- 2026-11-21 合并上游 develop `1a97137`（= v0.9.8.26 + PR #46 同网 VoWLAN 优先）。冲突处理：
+  - Relay SIM 标识校验改用上游更严格的 `validSIMAccountID`（与本仓库之前放开 `\n` 的修复等价，voip.ms 单行 id 照常通过）。
+  - PushKit 回调采用上游同步上报 CallKit 的崩溃修复，只补回网络诊断的推送计时。
+  - 上游改的旧版拨号盘 / 最近通话 / 短信列表在本仓库已删除，保留删除；上游的通话界面（蓝灰）和“收起通话 / 返回通话”接进新外壳，返回条改为把页面下推而不是盖住标题。
+  - 小组件保留本仓库“小/中尺寸不放切换按钮”，加上上游的分卡信号条。
+  - Root 发短信改为上游的逐段系统回执确认；`AppOpsSamplingGuard`（HyperOS NPE）仍在 `RootSmsMain` 中生效。
+  - 上游 `android-standalone/test.sh` 的版本断言没跟着改（仍是 140），这里改成 141 / 0.9.8.26。
 
 ## 构建
 

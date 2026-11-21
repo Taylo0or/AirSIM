@@ -397,7 +397,7 @@ final class SMSNavigationUITests: XCTestCase {
             XCTAssertFalse(app.shell("短信").exists && app.shell("短信").isHittable, "call surface must cover the tab bar")
             keep(app, "call-\(phase)-landscape")
             if phase == "active" {
-                app.buttons["键盘"].tap()
+                app.buttons["拨号键盘"].tap()
                 XCTAssertTrue(app.navigationBars["通话键盘"].waitForExistence(timeout: 5))
                 app.swipeUp()
                 XCTAssertTrue(app.buttons["发送 DTMF #"].isHittable)
@@ -406,6 +406,27 @@ final class SMSNavigationUITests: XCTestCase {
             }
             app.terminate()
         }
+    }
+
+    /// A call can be collapsed back to the shell and restored from the 返回通话 bar (upstream 0.9.8.26).
+    @MainActor func testCallCollapseAndRestoreKeepsSameCall() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchFixture(["AIRSIM_UI_CALL": "active", "AIRSIM_UI_REGION_NUMBER": "10086"])
+        defer { app.terminate() }
+        let minimize = app.buttons["call.minimize"]
+        XCTAssertTrue(minimize.waitForExistence(timeout: 10))
+        keep(app, "call-active")
+        minimize.tap()
+        let restore = app.buttons["call.restore"]
+        XCTAssertTrue(restore.waitForExistence(timeout: 5))
+        XCTAssertFalse(minimize.isHittable)
+        XCTAssertTrue(app.shell("短信").isHittable, "collapsed call must hand the shell back")
+        app.shell("短信").tap()
+        keep(app, "call-collapsed")
+        restore.tap()
+        XCTAssertTrue(minimize.waitForExistence(timeout: 5))
+        XCTAssertTrue(minimize.isHittable)
     }
 
     /// Exact service numbers get a logo in the list and thread header; 我的 › 网络诊断 opens.
