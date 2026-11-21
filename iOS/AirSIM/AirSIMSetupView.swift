@@ -177,8 +177,8 @@ private struct PureLocalSlideControl: View {
     }
 
     private var statusText: String { enabled ? "仅本地连接 · 云端已停用" : "按连接偏好运行" }
-    @AppStorage(AppTheme.storageKey) private var themeRaw = AppTheme.sky.rawValue
-    private var tint: Color { enabled ? .green : (AppTheme(rawValue: themeRaw) ?? .sky).accent }
+    @AppStorage(AppTheme.storageKey) private var themeRaw = AppTheme.warm.rawValue
+    private var tint: Color { enabled ? .green : (AppTheme(rawValue: themeRaw) ?? .warm).accent }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -511,7 +511,6 @@ private struct AirSIMSettingsLink: View {
     let page: AirSIMSettingsPage
     let icon: String
     var detail: String? = nil
-    @AppStorage(AppTheme.storageKey) private var themeRaw = AppTheme.sky.rawValue
 
     var body: some View {
         NavigationLink(value: page) {
@@ -521,15 +520,11 @@ private struct AirSIMSettingsLink: View {
                     if let detail { Text(detail).font(.caption).foregroundStyle(.secondary) }
                 }
             } icon: {
-                if AppTheme(rawValue: themeRaw)?.restylesSurfaces == true {
-                    // 暖橙: bare 20pt glyph in secondary text color.
-                    Image(systemName: icon)
-                        .font(.system(size: 18, weight: .regular))
-                        .foregroundStyle(Color(uiColor: WarmPalette.textSecondary))
-                        .frame(width: 26)
-                } else {
-                    Image(systemName: icon).foregroundStyle(.tint).frame(width: 26)
-                }
+                // Bare glyph in secondary text color (no icon chips).
+                Image(systemName: icon)
+                    .font(.system(size: 18, weight: .regular))
+                    .foregroundStyle(Color(uiColor: WarmPalette.textSecondary))
+                    .frame(width: 26)
             }
             .frame(minHeight: 44)
         }
@@ -649,9 +644,15 @@ struct AirSIMSettingsView: View {
     }
 
     @State private var path: [AirSIMSettingsPage]
+    @Environment(\.dismiss) private var dismissSettings
+    private let showsDoneButton: Bool
 
-    /// `initialPath` opens straight onto a page (the 暖橙 shell's 我的 rows); Back returns to 设置.
-    init(initialPath: [AirSIMSettingsPage] = []) { _path = State(initialValue: initialPath) }
+    /// `initialPath` opens straight onto a page (the shell's 我的 rows); Back returns to 设置.
+    /// Presented as a sheet, every page shows 完成 to close it.
+    init(initialPath: [AirSIMSettingsPage] = [], showsDoneButton: Bool = false) {
+        _path = State(initialValue: initialPath)
+        self.showsDoneButton = showsDoneButton
+    }
     @State private var localCheckRunning = false
     @State private var localCheckDate: Date?
     @State private var localCheckStatus: String?
@@ -759,6 +760,11 @@ struct AirSIMSettingsView: View {
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
                     Button("完成") { feedbackFocusedField = nil; networkPrefixesFocused = false }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if showsDoneButton {
+                        Button("完成") { dismissSettings() }.accessibilityIdentifier("settings.done")
+                    }
                 }
             }
     }

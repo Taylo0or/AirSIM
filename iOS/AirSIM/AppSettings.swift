@@ -60,34 +60,49 @@ enum AppLanguage: String, CaseIterable, Identifiable {
     }
 }
 
+/// Accent families of the one app design. Neutrals (paper, text, lines) are shared; each theme
+/// supplies an accessible accent for light and dark, its soft tint and the text color on it.
 enum AppTheme: String, CaseIterable, Identifiable {
-    case forest, sky, warm
+    case warm, forest, sky
     static let storageKey = "airsim.ui-theme"
     var id: String { rawValue }
     var title: String {
         switch self {
+        case .warm: return "暖橙"
         case .forest: return "墨绿"
         case .sky: return "天蓝"
-        case .warm: return "暖橙"
         }
     }
     var accent: Color { Color(uiColor: uiAccent) }
+
+    private static func rgb(_ hex: UInt32) -> UIColor {
+        UIColor(red: CGFloat((hex >> 16) & 0xff) / 255, green: CGFloat((hex >> 8) & 0xff) / 255,
+                blue: CGFloat(hex & 0xff) / 255, alpha: 1)
+    }
+    private static func pair(_ light: UInt32, _ dark: UInt32) -> UIColor {
+        UIColor { $0.userInterfaceStyle == .dark ? rgb(dark) : rgb(light) }
+    }
+
     var uiAccent: UIColor {
         switch self {
-        case .forest: return UIColor(red: 0.12, green: 0.47, blue: 0.38, alpha: 1)
-        case .sky: return UIColor(red: 0.12, green: 0.56, blue: 0.88, alpha: 1)
-        // Copper: #B84912 on paper, #F5A16B on dark (AirSIM 暖橙 design, 2026-11-20).
-        case .warm: return UIColor { $0.userInterfaceStyle == .dark
-            ? UIColor(red: 0xF5 / 255, green: 0xA1 / 255, blue: 0x6B / 255, alpha: 1)
-            : UIColor(red: 0xB8 / 255, green: 0x49 / 255, blue: 0x12 / 255, alpha: 1) }
+        case .warm: return Self.pair(0xB84912, 0xF5A16B)
+        case .forest: return Self.pair(0x1D6B53, 0x7CCBAE)
+        case .sky: return Self.pair(0x1F65A6, 0x8CBFF0)
         }
     }
-    /// 暖橙 restyles the surfaces and the app shell (paper backdrop, flat lists, copper accent);
-    /// 墨绿/天蓝 keep the system surfaces and only change the accent.
-    var restylesSurfaces: Bool { self == .warm }
-    /// For UIKit views that are not part of the SwiftUI environment.
+    var uiAccentSoft: UIColor {
+        switch self {
+        case .warm: return Self.pair(0xF8E9DE, 0x35251B)
+        case .forest: return Self.pair(0xE1EFE8, 0x1C2E27)
+        case .sky: return Self.pair(0xE2ECF7, 0x1B2634)
+        }
+    }
+    /// Text and glyphs on an accent fill (white on light accents' dark shades, ink on dark-mode pastels).
+    var uiOnAccent: UIColor { Self.pair(0xFFFFFF, 0x1E1D1B) }
+
+    /// For UIKit views and token lookups outside the SwiftUI environment.
     static var current: AppTheme {
-        AppTheme(rawValue: UserDefaults.standard.string(forKey: storageKey) ?? "") ?? .sky
+        AppTheme(rawValue: UserDefaults.standard.string(forKey: storageKey) ?? "") ?? .warm
     }
 }
 
@@ -117,7 +132,7 @@ final class AppSettings: ObservableObject {
 
     init() {
         let defaults = UserDefaults.standard
-        theme = AppTheme(rawValue: defaults.string(forKey: AppTheme.storageKey) ?? "sky") ?? .sky
+        theme = AppTheme(rawValue: defaults.string(forKey: AppTheme.storageKey) ?? "") ?? .warm
         appearance = AppAppearance(rawValue: defaults.string(forKey: L10n.appearanceKey) ?? "") ?? .system
         language = AppLanguage(rawValue: defaults.string(forKey: L10n.languageKey) ?? "") ?? .system
     }

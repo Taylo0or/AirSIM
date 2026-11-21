@@ -374,8 +374,6 @@ final class VoBLEMultiDeviceTests: XCTestCase {
         defer { model.stop() }
         XCTAssertNil(model.currentAndroidAgent)
         XCTAssertEqual(model.pairedAndroidAgents.count, 2)
-        XCTAssertEqual(DialPadAgentSection.make(mode: .bluetooth, hasCurrent: model.currentAndroidAgent != nil,
-            pairedCount: model.pairedAndroidAgents.count), .selection)
         model.bindAndroidAgent("selector-B")
         XCTAssertEqual(model.currentAndroidAgent?.id, "selector-B")
         XCTAssertEqual(a.central.state, .ready)

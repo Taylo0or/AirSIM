@@ -432,7 +432,7 @@ enum SMSCodeHighlight {
         let attributed = NSMutableAttributedString(string: text, attributes: [
             .font: UIFont.preferredFont(forTextStyle: .body), .foregroundColor: outgoing ? SMSThemeColors.outgoingText : SMSThemeColors.incomingText])
         attributed.addAttributes([.font: UIFont.preferredFont(forTextStyle: .headline),
-            .backgroundColor: AppTheme.current.restylesSurfaces ? WarmPalette.accentSoft : UIColor.systemYellow.withAlphaComponent(0.22),
+            .backgroundColor: WarmPalette.accentSoft,
             .link: URL(string: "airsim-code://copy/" + match.code)!], range: match.range)
         return (attributed, match.code)
     }
@@ -561,11 +561,11 @@ private final class SMSConversationCell: UICollectionViewCell, UIEditMenuInterac
             body.attributedText = highlighted.text
             highlightedCode = highlighted.code
         }
-        body.linkTextAttributes = [.foregroundColor: outgoing ? SMSThemeColors.outgoingText : (AppTheme.current.restylesSurfaces ? AppTheme.warm.uiAccent : UIColor.link),
+        body.linkTextAttributes = [.foregroundColor: outgoing ? SMSThemeColors.outgoingText : AppTheme.current.uiAccent,
                                    .underlineStyle: NSUnderlineStyle.single.rawValue]
         bubble.outgoing = outgoing
-        // 暖橙 bubbles: radius 16, no tail.
-        bubble.hasTail = item.showsTail && !AppTheme.current.restylesSurfaces
+        // Bubbles: radius 16, no tail.
+        bubble.hasTail = false
         bubble.refreshColors()
         dateLabel.text = date
         dateLabel.isHidden = !item.showsTimestamp
@@ -797,7 +797,7 @@ private final class SMSBubbleView: UIView {
     func bubblePath() -> UIBezierPath {
         let inset: CGFloat = hasTail ? 5 : 0
         let rect = bounds.inset(by: UIEdgeInsets(top: 0, left: outgoing ? 0 : inset, bottom: 0, right: outgoing ? inset : 0))
-        let path = UIBezierPath(roundedRect: rect, cornerRadius: min(AppTheme.current.restylesSurfaces ? 16 : 19, rect.height / 2))
+        let path = UIBezierPath(roundedRect: rect, cornerRadius: min(16, rect.height / 2))
         if hasTail {
             let tail = UIBezierPath()
             if outgoing {
@@ -996,11 +996,11 @@ final class SMSAttachmentView: UIView {
 }
 
 
-/// SMS timeline colors per theme: green/gray system bubbles, or orange/beige under 暖橙.
+/// SMS timeline colors: accent outgoing bubbles, muted incoming bubbles on the paper backdrop.
 enum SMSThemeColors {
-    static var background: UIColor { AppTheme.current.restylesSurfaces ? WarmPalette.background : .systemBackground }
-    static var outgoingBubble: UIColor { AppTheme.current.restylesSurfaces ? AppTheme.warm.uiAccent : .systemGreen }
-    static var incomingBubble: UIColor { AppTheme.current.restylesSurfaces ? WarmPalette.soft : .systemGray5 }
-    static var outgoingText: UIColor { AppTheme.current.restylesSurfaces ? WarmPalette.onAccent : .white }
-    static var incomingText: UIColor { AppTheme.current.restylesSurfaces ? WarmPalette.textPrimary : .label }
+    static var background: UIColor { WarmPalette.background }
+    static var outgoingBubble: UIColor { AppTheme.current.uiAccent }
+    static var incomingBubble: UIColor { WarmPalette.soft }
+    static var outgoingText: UIColor { WarmPalette.onAccent }
+    static var incomingText: UIColor { WarmPalette.textPrimary }
 }

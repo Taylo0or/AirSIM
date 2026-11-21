@@ -12,7 +12,7 @@
 | iOS | 包名 `com.taylent.airsim`，中转 `https://airsim.taylent.com`，去掉需审批的默认通话/短信 entitlement 和 App Group |
 | Relay | 短信事件可带 `attachments`（≤3 个 https 附件：彩信图片 / 语音留言），`send_sms` 可带 `media_ids`（有图时正文可空） |
 | iOS | voip.ms 线路（agent_kind `voipms`，桥接在 `~/airsim-voipms`）：气泡内显示彩信图片（QuickLook 预览）和语音留言播放；会话输入栏可选图发彩信，图片先上传到 `<relay>/voipms/media` |
-| iOS | 设置 › 外观与偏好 › 主题新增「暖橙」：整套新外壳（首页 / 通话 / 短信 / 我的，`WarmShellViews.swift`），设计稿由 Codex 出（`docs/design/warm-2026-11-20/`），墨绿/天蓝保持原界面 |
+| iOS | 界面换成新外壳（首页 / 通话 / 短信 / 我的，`WarmShellViews.swift`），设计稿由 Codex 出（`docs/design/warm-2026-11-20/`）；原上游五标签界面已删除。主题（暖橙 / 墨绿 / 天蓝）只切换这套界面的强调色 |
 
 ## 构建
 

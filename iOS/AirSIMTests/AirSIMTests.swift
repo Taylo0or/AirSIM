@@ -912,8 +912,6 @@ final class CloudStandbyLifecycleRegressionTests: XCTestCase {
         XCTAssertEqual(model.pairedAndroidAgents.map(\.id), ["standby-fixture"])
         XCTAssertEqual(model.currentAndroidAgent?.id, "standby-fixture")
         XCTAssertEqual(model.currentAndroidAgent?.cloudOnline, true, "keep the last confirmed observation, not a timed-out absence")
-        XCTAssertEqual(DialPadAgentSection.make(mode: .cloud, hasCurrent: model.currentAndroidAgent != nil,
-            pairedCount: model.pairedAndroidAgents.count), .current)
         XCTAssertEqual(requests, 1, "reading an idle dial card must not poll Relay")
         reply = try status(online: false)
         _ = await model.refreshCloudStatusForDiagnostics()
@@ -4931,18 +4929,6 @@ final class PhoneWindowLayoutTests: XCTestCase {
         for size in [CGSize(width: 740, height: 340), CGSize(width: 860, height: 740)] {
             XCTAssertTrue(PhoneWindowLayout.usesTwoColumns(size, accessibilitySize: false))
             XCTAssertFalse(PhoneWindowLayout.usesTwoColumns(size, accessibilitySize: true))
-        }
-    }
-
-    func testKeypadFitsColumnsWithoutShrinkingTouchTargets() {
-        for size in [CGSize(width: 320, height: 460), CGSize(width: 390, height: 720),
-                     CGSize(width: 740, height: 340), CGSize(width: 860, height: 740)] {
-            let split = PhoneWindowLayout.usesTwoColumns(size, accessibilitySize: false)
-            let width = split ? (size.width - 64) / 2 : size.width
-            let metrics = DialPadLayoutMetrics(availableHeight: size.height,
-                availableWidth: width, compactWidth: true, twoColumns: split)
-            XCTAssertGreaterThanOrEqual(metrics.keySize, 44)
-            XCTAssertLessThanOrEqual(metrics.keypadWidth, width - 32)
         }
     }
 }

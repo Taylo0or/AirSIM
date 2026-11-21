@@ -27,8 +27,8 @@ enum SystemCommunicationURL {
     }
 }
 
+/// Destinations of the app shell (首页 / 通话 segments / 短信 / 我的); raw values are persisted.
 enum PhoneTab: String, CaseIterable, Identifiable {
-    /// 暖橙 shell only (首页 and the 语音信箱 segment); the classic tab bar shows them as 拨号 / 最近.
     case home = "首页"
     case voicemail = "语音信箱"
     case dial = "拨号"
@@ -38,36 +38,6 @@ enum PhoneTab: String, CaseIterable, Identifiable {
     case settings = "设置"
 
     var id: String { rawValue }
-
-    var icon: String {
-        switch self {
-        case .dial: return "phone"
-        case .recents: return "clock"
-        case .messages: return "bubble.left.and.bubble.right"
-        case .contacts: return "person.crop.rectangle"
-        case .settings: return "slider.horizontal.3"
-        case .home: return "house"
-        case .voicemail: return "recordingtape"
-        }
-    }
-
-    // Reuse immutable symbol images when connection updates invalidate RootView.
-    // Keep titles and native hit targets independent of artwork size.
-    private static let tabImages: [PhoneTab: UIImage] = Dictionary(uniqueKeysWithValues:
-        allCases.map { tab in
-            (tab, UIImage(systemName: tab.icon, withConfiguration:
-                UIImage.SymbolConfiguration(pointSize: 20.57, weight: .regular, scale: .small)) ?? UIImage())
-        })
-
-    var tabImage: UIImage { Self.tabImages[self] ?? UIImage() }
-
-    var tabTitle: String {
-        switch self {
-        case .recents: return "最近"
-        case .contacts: return "联系人"
-        default: return rawValue
-        }
-    }
 }
 
 
@@ -80,10 +50,9 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var appUpdatePresentation: AppUpdatePresentation?
-    @AppStorage("airsim.selected-tab") private var selectedTabRawValue = PhoneTab.dial.rawValue
+    @AppStorage("airsim.selected-tab") private var selectedTabRawValue = PhoneTab.home.rawValue
     @State private var callbackSIMRequest: CallbackSIMDialRequest?
     @State private var pendingSMSRecipient: String?
-    @State private var messageListState = SMSConversationListState()
     @State private var conversationSender: String?
     @State private var showingConversation = false
     @AppStorage("airsim.first-connection-complete") private var firstConnectionComplete = false
@@ -98,85 +67,14 @@ struct RootView: View {
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            Group {
-              if settings.theme.restylesSurfaces {
-                WarmShellView(phoneTab: warmTabBinding, pendingSMSRecipient: $pendingSMSRecipient,
-                              conversationSender: $conversationSender, showingConversation: $showingConversation,
-                              onCall: dial, onMessage: composeMessage, openConversation: showSMSConversation)
-              } else {
-                TabView(selection: selectedTabBinding) {
-                    DialPadView()
-                        .tag(PhoneTab.dial)
-                        .tabItem { Label { Text(L10n.t(PhoneTab.dial.tabTitle)) } icon: {
-                            Image(uiImage: PhoneTab.dial.tabImage)
-                        }.environment(\.symbolVariants, .none) }
-
-
-                    RecentsView(onCall: dial, onMessage: composeMessage)
-                        .tag(PhoneTab.recents)
-                        .tabItem { Label { Text(L10n.t(PhoneTab.recents.tabTitle)) } icon: {
-                            Image(uiImage: PhoneTab.recents.tabImage)
-                        }.environment(\.symbolVariants, .none) }
-
-                        .badge(AirSIMWidgetSnapshot.badgeText(model.unseenMissedCallIDs.count))
-
-                    Group {
-                        if #available(iOS 17.0, *) {
-                            AdaptiveMessagesView(pendingRecipient: $pendingSMSRecipient,
-                                state: $messageListState, sender: $conversationSender,
-                                showingConversation: $showingConversation,
-                                openConversation: showSMSConversation)
-                        } else {
-                            NavigationStack {
-                                MessagesView(
-                                    pendingRecipient: $pendingSMSRecipient,
-                                    state: $messageListState,
-                                    openConversation: showSMSConversation
-                                )
-                                .navigationTitle(L10n.t("短信"))
-                                .navigationBarTitleDisplayMode(.large)
-                                .toolbar { SMSConversationListToolbar(state: $messageListState) }
-                                .navigationDestination(isPresented: $showingConversation) {
-                                    if let sender = conversationSender {
-                                        MessageThreadView(sender: sender)
-                                            .id(sender)
-                                            .toolbar(.hidden, for: .tabBar)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                        .tag(PhoneTab.messages)
-                        .tabItem { Label { Text(L10n.t(PhoneTab.messages.tabTitle)) } icon: {
-                            Image(uiImage: PhoneTab.messages.tabImage)
-                        }.environment(\.symbolVariants, .none) }
-
-                        .badge(AirSIMWidgetSnapshot.badgeText(model.unreadMessageIDs.count))
-
-                    ContactsView(onCall: dial, onMessage: composeMessage)
-                        .tag(PhoneTab.contacts)
-                        .tabItem { Label { Text(L10n.t(PhoneTab.contacts.tabTitle)) } icon: {
-                            Image(uiImage: PhoneTab.contacts.tabImage)
-                        }.environment(\.symbolVariants, .none) }
-
-
-                    AirSIMSettingsView()
-                        .tag(PhoneTab.settings)
-                        .tabItem { Label { Text(L10n.t(PhoneTab.settings.tabTitle)) } icon: {
-                            Image(uiImage: PhoneTab.settings.tabImage)
-                        }.environment(\.symbolVariants, .none) }
-
-                }
-              }
-            }
-                // Keep navigation state, but remove the underlying native tab
-                // chrome from rendering, hit testing and VoiceOver during calls.
-                // Duo promotes that chrome outside the SwiftUI content stack.
+            WarmShellView(phoneTab: tabBinding, pendingSMSRecipient: $pendingSMSRecipient,
+                          conversationSender: $conversationSender, showingConversation: $showingConversation,
+                          onCall: dial, onMessage: composeMessage, openConversation: showSMSConversation)
+                // Keep navigation state, but hide the shell from rendering, hit testing
+                // and VoiceOver while the in-app call surface is on top.
                 .opacity(presentedCall == nil ? 1 : 0)
                 .allowsHitTesting(presentedCall == nil)
                 .accessibilityHidden(presentedCall != nil)
-                .phoneTabBarAlwaysExpanded()
-                .phoneTabSelectionFeedback(selectedTabRawValue)
                 .tint(settings.theme.accent)
 
             if let call = presentedCall {
@@ -303,32 +201,15 @@ struct RootView: View {
         else { presentAppUpdateIfIdle() }
     }
 
-    /// The 暖橙 shell sees every destination, including 首页 and 语音信箱.
-    private var warmTabBinding: Binding<PhoneTab> {
+    private var tabBinding: Binding<PhoneTab> {
         Binding(
             get: { PhoneTab(rawValue: selectedTabRawValue) ?? .home },
             set: { selectedTabRawValue = $0.rawValue }
         )
     }
 
-    private var selectedTabBinding: Binding<PhoneTab> {
-        Binding(
-            get: {
-                switch PhoneTab(rawValue: selectedTabRawValue) ?? .dial {
-                case .home: return .dial
-                case .voicemail: return .recents
-                case let tab: return tab
-                }
-            },
-            set: { newTab in
-                guard newTab.rawValue != selectedTabRawValue else { return }
-                selectedTabRawValue = newTab.rawValue
-            }
-        )
-    }
-
     private var selectedTab: PhoneTab {
-        get { PhoneTab(rawValue: selectedTabRawValue) ?? .dial }
+        get { PhoneTab(rawValue: selectedTabRawValue) ?? .home }
         nonmutating set { selectedTabRawValue = newValue.rawValue }
     }
 
@@ -415,50 +296,12 @@ struct RootView: View {
     }
 }
 
-/// 浅色模式使用系统电话式纯白底；深色模式才绘制深蓝黑底部环境光。暖橙主题用米白 / 暖炭底。
+/// Page backdrop: paper white / charcoal (docs/design/warm-2026-11-20/DESIGN.md §3.1).
 struct PhoneBackdrop: View {
-    @Environment(\.colorScheme) private var colorScheme
-    @AppStorage(AppTheme.storageKey) private var themeRaw = AppTheme.sky.rawValue
-
-    var body: some View {
-        ZStack {
-            if AppTheme(rawValue: themeRaw)?.restylesSurfaces == true {
-                Color(uiColor: WarmPalette.background)
-            } else if colorScheme == .dark {
-                Color(red: 0.008, green: 0.016, blue: 0.035)
-                LinearGradient(
-                    colors: [
-                        Color.clear,
-                        Color(red: 0.018, green: 0.075, blue: 0.16).opacity(0.72),
-                        Color(red: 0.025, green: 0.20, blue: 0.48).opacity(0.62),
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            } else {
-                Color(uiColor: .systemGroupedBackground)
-            }
-        }
-        .ignoresSafeArea()
-    }
+    var body: some View { Color(uiColor: WarmPalette.background).ignoresSafeArea() }
 }
 
-/// 内容卡片使用系统分组背景，保证深浅色和主题下的可读性。
-struct PhoneCard: ViewModifier {
-    @AppStorage(AppTheme.storageKey) private var themeRaw = AppTheme.sky.rawValue
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        let padded = content.padding(18).frame(maxWidth: .infinity, alignment: .leading)
-        if AppTheme(rawValue: themeRaw)?.restylesSurfaces == true {
-            padded.modifier(WarmCardSurface(cornerRadius: 24))
-        } else {
-            padded.background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        }
-    }
-}
-
-/// 暖橙主题的设计令牌（见 docs/design/warm-2026-11-20/DESIGN.md §3.1）：纸白底、平面列表、铜橙只用于操作与选中。
+/// Design tokens: paper backdrop, flat lists; the theme (暖橙 / 墨绿 / 天蓝) only picks the accent family.
 enum WarmPalette {
     private static func rgb(_ hex: UInt32, _ alpha: CGFloat = 1) -> UIColor {
         UIColor(red: CGFloat((hex >> 16) & 0xff) / 255, green: CGFloat((hex >> 8) & 0xff) / 255,
@@ -471,11 +314,11 @@ enum WarmPalette {
     static let card = dynamic(.white, rgb(0x222220))            // surface
     static let cardBorder = dynamic(rgb(0xDCD8D0), rgb(0x3D3D38)) // separator
     static let soft = dynamic(rgb(0xEEEBE5), rgb(0x30302D))       // surfaceMuted: search, segments, incoming bubble
-    static let accentSoft = dynamic(rgb(0xF8E9DE), rgb(0x35251B))
+    static var accentSoft: UIColor { AppTheme.current.uiAccentSoft }
+    static var onAccent: UIColor { AppTheme.current.uiOnAccent }
     static let textPrimary = dynamic(rgb(0x1E1D1B), rgb(0xF3F1EC))
     static let textSecondary = dynamic(rgb(0x66635E), rgb(0xABA7A0))
     static let textDisabled = dynamic(rgb(0x99948D), rgb(0x726F69))
-    static let onAccent = dynamic(.white, rgb(0x1E1D1B))
     static let controlBorder = dynamic(rgb(0x8B867E), rgb(0x858078))
     static let positive = dynamic(rgb(0x1F7654), rgb(0x78C9A0))
     static let danger = dynamic(rgb(0xBF3535), rgb(0xFF8D88))
@@ -484,7 +327,7 @@ enum WarmPalette {
     static let disabledFill = dynamic(rgb(0xE4E0D9), rgb(0x353531))
 }
 
-/// Surface block: white / #222220, hairline edge, no shadow (shadows are 0 in this theme).
+/// Surface block: white / #222220, hairline edge, no shadow.
 struct WarmCardSurface: ViewModifier {
     let cornerRadius: CGFloat
     @Environment(\.displayScale) private var displayScale
@@ -494,40 +337,6 @@ struct WarmCardSurface: ViewModifier {
             .background(Color(uiColor: WarmPalette.card), in: shape)
             .overlay(shape.strokeBorder(Color(uiColor: WarmPalette.cardBorder), lineWidth: 1 / max(displayScale, 1)))
     }
-}
-
-/// Small floating panels: system thin material, or a warm card under 暖橙.
-struct PhoneSurface: ViewModifier {
-    let cornerRadius: CGFloat
-    @AppStorage(AppTheme.storageKey) private var themeRaw = AppTheme.sky.rawValue
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if AppTheme(rawValue: themeRaw)?.restylesSurfaces == true {
-            content.modifier(WarmCardSurface(cornerRadius: cornerRadius))
-        } else {
-            content.background(.thinMaterial, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-        }
-    }
-}
-
-/// Grouped forms keep the cream backdrop under 暖橙 instead of the cool system gray.
-struct PhoneListBackground: ViewModifier {
-    @AppStorage(AppTheme.storageKey) private var themeRaw = AppTheme.sky.rawValue
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if AppTheme(rawValue: themeRaw)?.restylesSurfaces == true {
-            content.scrollContentBackground(.hidden).background(PhoneBackdrop())
-        } else {
-            content
-        }
-    }
-}
-
-extension View {
-    func phoneSurface(cornerRadius: CGFloat = 16) -> some View { modifier(PhoneSurface(cornerRadius: cornerRadius)) }
-    func phoneListBackground() -> some View { modifier(PhoneListBackground()) }
 }
 
 struct PhoneGlassSurface: ViewModifier {
@@ -559,212 +368,18 @@ struct PhoneGlassSurface: ViewModifier {
     }
 }
 
-/// 自定义工具栏材质仅用于隐藏了系统共享背景的 ToolbarItem，确保始终只有一层玻璃。
-private struct PhoneToolbarGlassMorph: ViewModifier {
-    let id: String
-    @Namespace private var glassNamespace
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
-            GlassEffectContainer(spacing: 14) {
-                content
-                    .buttonStyle(.plain)
-                    .padding(.horizontal, 10)
-                    .frame(minWidth: 44, minHeight: 44)
-                    .contentShape(Capsule())
-                    .glassEffect(.regular.interactive(), in: Capsule())
-                    .glassEffectID(id, in: glassNamespace)
-                    .glassEffectTransition(.materialize)
-            }
-            .transition(.opacity.combined(with: .scale(scale: 0.82)))
-        } else {
-            content
-        }
-    }
-}
-
-/// iOS 26 隐藏导航栏自动生成的共享按钮背景，再使用上面的单层可变形玻璃；
-/// 旧系统继续交给 ToolbarItem 使用平台默认样式。
-@ToolbarContentBuilder
-func phoneMorphingToolbarItem<Content: View>(
-    placement: ToolbarItemPlacement,
-    id: String,
-    @ViewBuilder content: () -> Content
-) -> some ToolbarContent {
-    if #available(iOS 26.0, *) {
-        ToolbarItem(placement: placement) {
-            content().phoneToolbarGlassMorph(id: id)
-        }
-        .sharedBackgroundVisibility(.hidden)
-    } else {
-        ToolbarItem(placement: placement, content: content)
-    }
-}
-
 extension View {
-    func phoneCard() -> some View { modifier(PhoneCard()) }
+    /// Grouped settings forms sit on the paper backdrop instead of the system gray.
+    func phoneListBackground() -> some View { scrollContentBackground(.hidden).background(PhoneBackdrop()) }
 
     func phoneGlassSurface(
         cornerRadius: CGFloat = 18,
         tint: Color? = nil,
         interactive: Bool = false
     ) -> some View {
-        modifier(PhoneGlassSurface(
-            cornerRadius: cornerRadius,
-            tint: tint,
-            interactive: interactive
-        ))
-    }
-
-    @ViewBuilder
-    func phoneTabBarAlwaysExpanded() -> some View {
-        if #available(iOS 26.0, *) {
-            self.tabBarMinimizeBehavior(.never)
-        } else {
-            self
-        }
-    }
-
-    func phoneToolbarGlassMorph(id: String) -> some View {
-        modifier(PhoneToolbarGlassMorph(id: id))
-    }
-
-    @ViewBuilder
-    func phoneTabSelectionFeedback(_ trigger: String) -> some View {
-        if #available(iOS 17.0, *) {
-            sensoryFeedback(.selection, trigger: trigger)
-        } else {
-            self
-        }
+        modifier(PhoneGlassSurface(cornerRadius: cornerRadius, tint: tint, interactive: interactive))
     }
 }
-
-/// The entire TabView is the root of the outer navigation stack. Its native
-/// bar fades with that root, below the opaque conversation being pushed/popped.
-private struct PhoneTabBarNavigationFade: UIViewControllerRepresentable {
-    func makeUIViewController(context: Context) -> Controller { Controller() }
-    func updateUIViewController(_ controller: Controller, context: Context) {}
-
-    final class Controller: UIViewController {
-        private weak var nativeTabBar: UITabBar?
-
-        override func loadView() {
-            view = UIView()
-            view.backgroundColor = .clear
-            view.isUserInteractionEnabled = false
-        }
-
-        override func viewWillAppear(_ animated: Bool) {
-            super.viewWillAppear(animated)
-            transitionTabBar(visible: true, animated: animated)
-        }
-
-        override func viewWillDisappear(_ animated: Bool) {
-            super.viewWillDisappear(animated)
-            transitionTabBar(visible: false, animated: animated)
-        }
-
-        override func viewDidAppear(_ animated: Bool) {
-            super.viewDidAppear(animated)
-            if let bar = findTabBar() { Self.settle(bar, visible: true) }
-        }
-
-        override func viewDidDisappear(_ animated: Bool) {
-            super.viewDidDisappear(animated)
-            if let bar = nativeTabBar { Self.settle(bar, visible: false) }
-        }
-
-
-        private func findTabBar() -> UITabBar? {
-            if let nativeTabBar { return nativeTabBar }
-            func find(in controller: UIViewController) -> UITabBar? {
-                if let tabs = controller as? UITabBarController { return tabs.tabBar }
-                for child in controller.children {
-                    if let bar = find(in: child) { return bar }
-                }
-                return nil
-            }
-            var ancestor = parent
-            while let controller = ancestor {
-                if let bar = find(in: controller) {
-                    nativeTabBar = bar
-                    return bar
-                }
-                ancestor = controller.parent
-            }
-            return nil
-        }
-
-        private func transitionTabBar(visible: Bool, animated: Bool) {
-            guard let bar = findTabBar() else { return }
-            bar.isUserInteractionEnabled = false
-            bar.accessibilityElementsHidden = true
-            guard animated, !UIAccessibility.isReduceMotionEnabled,
-                  let coordinator = transitionCoordinator else {
-                Self.settle(bar, visible: visible)
-                return
-            }
-            let queued = coordinator.animateAlongsideTransition(in: bar, animation: { _ in
-                bar.alpha = visible ? 1 : 0
-            }, completion: { context in
-                let finalVisible = context.isCancelled ? !visible : visible
-                Self.settle(bar, visible: finalVisible)
-            })
-            if !queued { Self.settle(bar, visible: visible) }
-        }
-
-        private static func settle(_ bar: UITabBar, visible: Bool) {
-            bar.alpha = visible ? 1 : 0
-            bar.isUserInteractionEnabled = visible
-            bar.accessibilityElementsHidden = !visible
-        }
-    }
-}
-
-/// One split-view hierarchy survives folding/resizing without recreating the
-/// thread composer. Compact columns are managed by the system's back gesture.
-@available(iOS 17.0, *)
-private struct AdaptiveMessagesView: View {
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @Binding var pendingRecipient: String?
-    @Binding var state: SMSConversationListState
-    @Binding var sender: String?
-    @Binding var showingConversation: Bool
-    let openConversation: (String) -> Void
-    @State private var compactColumn: NavigationSplitViewColumn = .sidebar
-
-    var body: some View {
-        NavigationSplitView(preferredCompactColumn: $compactColumn) {
-            MessagesView(pendingRecipient: $pendingRecipient, state: $state,
-                         openConversation: openConversation)
-                .navigationTitle(L10n.t("短信"))
-                .navigationBarTitleDisplayMode(.large)
-                .toolbar { SMSConversationListToolbar(state: $state) }
-                .navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 400)
-        } detail: {
-            if let sender, showingConversation {
-                MessageThreadView(sender: sender)
-                    .id(sender)
-            } else {
-                ContentUnavailableView("选择一段对话", systemImage: "message",
-                    description: Text("从左侧选择短信，或新建一条短信。"))
-            }
-        }
-        .navigationSplitViewStyle(.balanced)
-        .toolbar(horizontalSizeClass == .compact && showingConversation ? .hidden : .automatic, for: .tabBar)
-        .onChange(of: showingConversation) { _, showing in
-            compactColumn = showing ? .detail : .sidebar
-        }
-        .onChange(of: compactColumn) { _, column in
-            if horizontalSizeClass == .compact && column == .sidebar {
-                showingConversation = false
-            }
-        }
-        .onAppear { compactColumn = showingConversation ? .detail : .sidebar }
-    }
-}
-
 
 /// UI-only callback intent. The existing model/router remains the dial owner.
 struct CallbackSIMDialRequest: Identifiable {

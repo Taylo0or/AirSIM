@@ -1,22 +1,22 @@
 import SwiftUI
 import UIKit
 
-// 暖橙主题的 App 外壳，按 Codex 设计稿实现（docs/design/warm-2026-11-20/DESIGN.md）。
-// 原则：号码优先、平面列表、铜橙只用于操作与选中；系统字体，无阴影、无渐变。
+// AirSIM 的 App 外壳，按 Codex 设计稿实现（docs/design/warm-2026-11-20/DESIGN.md）。
+// 原则：号码优先、平面列表、强调色只用于操作与选中（主题决定强调色：暖橙 / 墨绿 / 天蓝）；系统字体，无阴影、无渐变。
 // 通话界面、短信会话页、设置子页面沿用原有实现。
 
 // MARK: - Tokens
 
 enum Warm {
-    static var accent: Color { Color(uiColor: AppTheme.warm.uiAccent) }
+    static var accent: Color { Color(uiColor: AppTheme.current.uiAccent) }
     static let background = Color(uiColor: WarmPalette.background)
     static let surface = Color(uiColor: WarmPalette.card)
     static let muted = Color(uiColor: WarmPalette.soft)
     static let text = Color(uiColor: WarmPalette.textPrimary)
     static let secondary = Color(uiColor: WarmPalette.textSecondary)
     static let disabled = Color(uiColor: WarmPalette.textDisabled)
-    static let onAccent = Color(uiColor: WarmPalette.onAccent)
-    static let accentSoft = Color(uiColor: WarmPalette.accentSoft)
+    static var onAccent: Color { Color(uiColor: WarmPalette.onAccent) }
+    static var accentSoft: Color { Color(uiColor: WarmPalette.accentSoft) }
     static let separator = Color(uiColor: WarmPalette.cardBorder)
     static let controlBorder = Color(uiColor: WarmPalette.controlBorder)
     static let positive = Color(uiColor: WarmPalette.positive)
@@ -448,6 +448,8 @@ struct WarmShellView: View {
     @AppStorage("airsim.warm.calls-segment") private var lastCallsSegment = PhoneTab.dial.rawValue
     @State private var settingsRoute: WarmSettingsRoute?
     @State private var lineContext: WarmLineContext?
+    @State private var callsPath: [String] = []
+    @State private var tabBarHeight: CGFloat = 50
 
     private var tab: WarmTab {
         switch phoneTab {
@@ -491,34 +493,50 @@ struct WarmShellView: View {
                    badges: [.calls: model.unseenMissedCallIDs.count, .messages: model.warmUnreadConversations])
     }
 
+    /// Pushed pages (a conversation, a contact) cover the tab bar.
+    private var showsTabBar: Bool {
+        !(tab == .messages && showingConversation) && !(tab == .calls && !callsPath.isEmpty)
+    }
+
     var body: some View {
-        ZStack {
-            layer(.home) {
-                NavigationStack {
-                    WarmHomeView(actions: actions).safeAreaInset(edge: .bottom, spacing: 0) { tabBar }
-                }
+        // TabView keeps each tab's navigation and scroll state and exposes only the selected tab to
+        // VoiceOver; its own bar is hidden in favour of the custom one below.
+        TabView(selection: Binding(get: { tab }, set: { select($0) })) {
+            NavigationStack {
+                WarmHomeView(actions: actions).toolbar(.hidden, for: .tabBar).modifier(WarmTabBarSpace(height: tabBarHeight))
             }
-            layer(.calls) {
-                WarmCallsView(segment: callsSegment, actions: actions) { tabBar }
-            }
-            layer(.messages) {
-                NavigationStack {
-                    WarmMessagesView(pendingRecipient: $pendingSMSRecipient, open: openConversation)
-                        .safeAreaInset(edge: .bottom, spacing: 0) { tabBar }
-                        .navigationDestination(isPresented: $showingConversation) {
-                            if let sender = conversationSender { MessageThreadView(sender: sender).id(sender) }
+            .tag(WarmTab.home)
+            WarmCallsView(segment: callsSegment, path: $callsPath, actions: actions, tabBarHeight: tabBarHeight)
+                .tag(WarmTab.calls)
+            NavigationStack {
+                WarmMessagesView(pendingRecipient: $pendingSMSRecipient, open: openConversation)
+                    .toolbar(.hidden, for: .tabBar)
+                    .modifier(WarmTabBarSpace(height: tabBarHeight))
+                    .navigationDestination(isPresented: $showingConversation) {
+                        if let sender = conversationSender {
+                            MessageThreadView(sender: sender).id(sender).toolbar(.hidden, for: .tabBar)
                         }
-                }
+                    }
             }
-            layer(.account) {
-                NavigationStack {
-                    WarmAccountView(actions: actions).safeAreaInset(edge: .bottom, spacing: 0) { tabBar }
-                }
+            .tag(WarmTab.messages)
+            NavigationStack {
+                WarmAccountView(actions: actions).toolbar(.hidden, for: .tabBar).modifier(WarmTabBarSpace(height: tabBarHeight))
+            }
+            .tag(WarmTab.account)
+        }
+        .id(settings.theme)
+        // One tab bar for the whole shell; each root reserves its height (WarmTabBarSpace).
+        .overlay(alignment: .bottom) {
+            if showsTabBar {
+                tabBar.background(GeometryReader { proxy in
+                    Color.clear.onAppear { tabBarHeight = proxy.size.height }
+                        .onChange(of: proxy.size.height) { tabBarHeight = $0 }
+                })
             }
         }
         .background(Warm.background.ignoresSafeArea())
         .sheet(item: $settingsRoute) { route in
-            AirSIMSettingsView(initialPath: route.path)
+            AirSIMSettingsView(initialPath: route.path, showsDoneButton: true)
                 .environmentObject(model)
                 .environmentObject(model.contacts)
                 .environmentObject(model.audio)
@@ -533,16 +551,15 @@ struct WarmShellView: View {
             .environmentObject(model)
         }
     }
+}
 
-    /// All four roots stay alive (navigation and scroll state); only one is visible.
-    @ViewBuilder
-    private func layer<Content: View>(_ which: WarmTab, @ViewBuilder content: () -> Content) -> some View {
-        let visible = tab == which
-        content()
-            .opacity(visible ? 1 : 0)
-            .allowsHitTesting(visible)
-            .accessibilityHidden(!visible)
-            .zIndex(visible ? 1 : 0)
+/// Keeps a root page's content clear of the shell's floating tab bar.
+struct WarmTabBarSpace: ViewModifier {
+    let height: CGFloat
+    func body(content: Content) -> some View {
+        content.safeAreaInset(edge: .bottom, spacing: 0) {
+            Color.clear.frame(height: height).accessibilityHidden(true)
+        }
     }
 }
 
@@ -840,12 +857,12 @@ struct WarmHomeView: View {
 
 // MARK: - Calls (P02–P06, P16–P18, P21–P23)
 
-struct WarmCallsView<TabBar: View>: View {
+struct WarmCallsView: View {
     @EnvironmentObject private var model: AppModel
     @Binding var segment: PhoneTab
+    @Binding var path: [String]
     let actions: WarmActions
-    @ViewBuilder var tabBar: () -> TabBar
-    @State private var path: [String] = []
+    let tabBarHeight: CGFloat
     @State private var tick = 0
     @State private var confirmingVoicemailClear = false
 
@@ -896,13 +913,15 @@ struct WarmCallsView<TabBar: View>: View {
             }
             .background(Warm.background.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
-            .safeAreaInset(edge: .bottom, spacing: 0, content: tabBar)
+            .toolbar(.hidden, for: .tabBar)
+            .modifier(WarmTabBarSpace(height: tabBarHeight))
             .navigationDestination(for: String.self) { contactID in
                 WarmContactDetail(contactID: contactID, actions: actions) { number in
                     path = []
                     model.numberInput = number
                     segment = .dial
                 }
+                .toolbar(.hidden, for: .tabBar)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: SMSAudioPlayback.didChange)) { _ in tick &+= 1 }
@@ -923,33 +942,52 @@ struct WarmSegmentedControl: View {
     struct Item { let tab: PhoneTab; let title: String; var count: Int = 0 }
     @Binding var selection: PhoneTab
     let items: [Item]
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(items, id: \.tab) { item in
-                let selected = selection == item.tab
-                Button {
-                    withAnimation(.easeOut(duration: 0.12)) { selection = item.tab }
-                } label: {
+        // From XXXL on, four equal segments would truncate: scroll a row of full-size labels instead.
+        if typeSize >= .xxxLarge {
+            ScrollViewReader { reader in
+                ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 4) {
-                        Text(item.title).font(.subheadline.weight(selected ? .semibold : .medium)).lineLimit(1)
-                        if item.count > 0 {
-                            Text(item.count > 9 ? "9+" : "\(item.count)")
-                                .font(.caption.weight(.semibold)).monospacedDigit().foregroundStyle(Warm.accent)
-                        }
+                        ForEach(items, id: \.tab) { item in segment(item).fixedSize().id(item.tab) }
                     }
-                    .foregroundStyle(selected ? Warm.text : Warm.secondary)
-                    .frame(maxWidth: .infinity, minHeight: 38)
-                    .background(selected ? Warm.surface : Color.clear, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                    .contentShape(Rectangle())
+                    .padding(3)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(item.count > 0 ? "\(item.title)，\(item.count)" : item.title)
-                .accessibilityAddTraits(selected ? [.isSelected, .isButton] : .isButton)
+                .background(Warm.muted, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .onAppear { reader.scrollTo(selection) }
+                .onChange(of: selection) { reader.scrollTo($0) }
             }
+        } else {
+            HStack(spacing: 0) {
+                ForEach(items, id: \.tab) { item in segment(item) }
+            }
+            .padding(3)
+            .background(Warm.muted, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
-        .padding(3)
-        .background(Warm.muted, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func segment(_ item: Item) -> some View {
+        let selected = selection == item.tab
+        return Button {
+            withAnimation(.easeOut(duration: 0.12)) { selection = item.tab }
+        } label: {
+            HStack(spacing: 4) {
+                Text(item.title).font(.subheadline.weight(selected ? .semibold : .medium)).lineLimit(1)
+                if item.count > 0 {
+                    Text(item.count > 9 ? "9+" : "\(item.count)")
+                        .font(.caption.weight(.semibold)).monospacedDigit().foregroundStyle(Warm.accent)
+                }
+            }
+            .foregroundStyle(selected ? Warm.text : Warm.secondary)
+            .padding(.horizontal, typeSize >= .xxxLarge ? 14 : 0)
+            .frame(maxWidth: typeSize >= .xxxLarge ? nil : .infinity, minHeight: typeSize >= .xxxLarge ? 44 : 38)
+            .background(selected ? Warm.surface : Color.clear, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(item.count > 0 ? "\(item.title)，\(item.count)" : item.title)
+        .accessibilityAddTraits(selected ? [.isSelected, .isButton] : .isButton)
     }
 }
 
@@ -1285,6 +1323,10 @@ private struct WarmCallDetail: View {
                         WarmHairline()
                         fact("通话状态", call.missed ? "未接" : incoming ? "呼入" : "呼出", danger: call.missed)
                         WarmHairline()
+                        if let region = PhoneRegionLookup.region(for: call.number) {
+                            fact("归属地", region)
+                            WarmHairline()
+                        }
                         fact("经由线路", model.warmSourceLabel(agentID: call.sourceAgentID, slot: call.slotIndex.map { "SIM \($0 + 1)" }),
                              detail: line.map { "\($0.source) · \($0.route)" })
                         if let duration = call.connectedDuration {
@@ -1751,7 +1793,7 @@ private struct WarmConversationRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(unread ? "\(name)，未读" : name)
+        .accessibilityLabel([name, unread ? "未读" : nil, preview(latest), latest.map(source)].compactMap { $0 }.joined(separator: "，"))
         .contextMenu {
             Button(role: .destructive) { model.deleteMessages(ids: Set(messages.map(\.id))) } label: { Label("删除会话", systemImage: "trash") }
         }
