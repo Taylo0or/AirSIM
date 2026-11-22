@@ -105,6 +105,16 @@ struct SMSNavigationFixture {
                     endedAt: now, missed: false))
             }
             history.saveCallHistory(calls); model.callHistory = calls
+            if ProcessInfo.processInfo.environment["AIRSIM_UI_LATE_MISSED"] == "1" {
+                // A cloud line's record lands seconds after Recents is already on screen.
+                let earlier = calls
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(10))
+                    let late = CallRecord(id: "recent-late", index: 0, direction: "incoming", state: "ended",
+                        number: "16045550188", startedAt: Date(), updatedAt: Date(), endedAt: Date(), missed: true)
+                    history.saveCallHistory([late] + earlier); model.callHistory = [late] + earlier
+                }
+            }
         }
         if ProcessInfo.processInfo.environment["AIRSIM_UI_WARM"] == "1" { model.callHistory = history.loadCallHistory() }
         let updates = AppUpdateController(defaults: defaults, fetch: { [] })

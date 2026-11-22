@@ -1172,10 +1172,17 @@ struct WarmKeypad: View {
 
 struct WarmRecentsList: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.scenePhase) private var scenePhase
     let actions: WarmActions
     let showVoicemail: () -> Void
     @State private var missedOnly = false
     @State private var detail: CallRecord?
+    @State private var visible = false
+
+    private func markSeenIfShown() {
+        guard visible, scenePhase == .active, !model.callHistory.isEmpty else { return }
+        model.markMissedCallsSeen()
+    }
 
     var body: some View {
         let records = model.callHistory.filter { !missedOnly || ($0.direction == "incoming" && $0.missed) }
@@ -1210,7 +1217,13 @@ struct WarmRecentsList: View {
             .padding(.bottom, 16)
         }
         .refreshable { await model.refreshCallHistory() }
-        .onAppear { if !model.callHistory.isEmpty { model.markMissedCallsSeen() } }
+        // Missed calls count as seen while this list is on screen — including records that
+        // arrive after it appeared (cloud lines sync a few seconds later) or while the app was
+        // in the background with the list open. Marking only on appear left the tab badge stale.
+        .onAppear { visible = true; markSeenIfShown() }
+        .onDisappear { visible = false }
+        .onChange(of: model.callHistory) { _ in markSeenIfShown() }
+        .onChange(of: scenePhase) { _ in markSeenIfShown() }
         .sheet(item: $detail) { call in
             WarmCallDetail(call: call, hasVoicemail: hasVoicemail(call), actions: actions) {
                 detail = nil
@@ -1371,6 +1384,7 @@ private struct WarmCallDetail: View {
             .navigationTitle("通话详情")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() } } }
+            .onAppear { model.markMissedCallsSeen([call]) }
         }
         .tint(Warm.accent)
         .presentationDetents([.medium, .large])

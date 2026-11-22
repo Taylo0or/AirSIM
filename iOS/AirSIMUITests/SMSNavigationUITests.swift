@@ -90,6 +90,25 @@ final class SMSNavigationUITests: XCTestCase {
         app.terminate()
     }
 
+    /// Regression (2026-11-22): a missed call that syncs in while Recents is open must not leave
+    /// the 通话 badge behind; only an app restart used to clear it.
+    @MainActor func testMissedCallArrivingWhileRecentsIsOpenClearsBadge() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchFixture(["AIRSIM_UI_RECENTS": "1", "AIRSIM_UI_LATE_MISSED": "1"])
+        defer { app.terminate() }
+        openRecents(app)
+        let late = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "555 0188")).firstMatch
+        XCTAssertFalse(late.exists, "Recents must be on screen before the late record lands")
+        XCTAssertTrue(app.shell("通话").label == "通话", "the first missed call is seen on appear")
+        XCTAssertTrue(late.waitForExistence(timeout: 20), "late missed call must show up")
+        let calls = app.shell("通话")
+        let cleared = NSPredicate(format: "label == %@", "通话")
+        expectation(for: cleared, evaluatedWith: calls)
+        waitForExpectations(timeout: 5)
+        keep(app, "recents-late-missed-badge-cleared")
+    }
+
     @MainActor func testAllAndMissedRecentFilter() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
