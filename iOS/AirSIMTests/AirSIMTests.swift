@@ -6453,3 +6453,36 @@ final class VoWLANLANFirstIntegrationTests: XCTestCase {
             attempted: [try XCTUnwrap(vpn.endpoint)]))
     }
 }
+
+/// Every line must keep reaching the history whatever route the others use.
+final class CloudCatchUpPolicyTests: XCTestCase {
+    let android = "android-e3c30e761f277f0b41c11e28", voipms = "voipms-516897"
+
+    func testCloudOnlyLineSyncsWhileAndroidIsOnTheLAN() {
+        // At home: the Android is polled locally, voip.ms still needs the Relay.
+        XCTAssertEqual(CloudCatchUpPolicy.targets(paired: [android, voipms], cloudOnly: [voipms],
+                                                  locallyReachable: [android]), [voipms])
+    }
+
+    func testAwayFromTheLANEveryLineSyncs() {
+        XCTAssertEqual(CloudCatchUpPolicy.targets(paired: [android, voipms], cloudOnly: [voipms],
+                                                  locallyReachable: []), [android, voipms])
+    }
+
+    func testCloudOnlyLineIsNeverTreatedAsLocal() {
+        XCTAssertEqual(CloudCatchUpPolicy.targets(paired: [voipms], cloudOnly: [voipms],
+                                                  locallyReachable: [voipms]), [voipms])
+    }
+
+    func testLineThatCarriedTheCallGoesFirstEvenIfLocal() {
+        XCTAssertEqual(CloudCatchUpPolicy.targets(paired: [android, voipms], cloudOnly: [voipms],
+                                                  locallyReachable: [android], callLine: voipms), [voipms])
+        XCTAssertEqual(CloudCatchUpPolicy.targets(paired: [android, voipms], cloudOnly: [voipms],
+                                                  locallyReachable: [android], callLine: android), [android, voipms])
+    }
+
+    func testNoDuplicates() {
+        XCTAssertEqual(CloudCatchUpPolicy.targets(paired: [voipms, voipms, android], cloudOnly: [voipms],
+                                                  locallyReachable: [], callLine: voipms), [voipms, android])
+    }
+}

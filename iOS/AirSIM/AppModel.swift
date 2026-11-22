@@ -4053,11 +4053,11 @@ final class AppModel: ObservableObject {
         let localRoute = verifiedVoWLANAPI() != nil
         var local = Set(localDevices.agentIDs.filter { localDevices.api(for: $0) != nil })
         if localRoute, let bound = boundAgentID { local.insert(bound) }
-        var ids: [String] = []
-        for id in [extra].compactMap({ $0 }) + pairedDeviceHistory.map(\.id) where !ids.contains(id) {
-            guard CloudAgentRouting.validID(id), PairedAndroidDeviceStore.permits(id) else { continue }
-            if id == extra || isCloudOnlyAgent(id) || !local.contains(id) { ids.append(id) }
-        }
+        let paired = pairedDeviceHistory.map(\.id)
+            .filter { CloudAgentRouting.validID($0) && PairedAndroidDeviceStore.permits($0) }
+        let callLine = extra.flatMap { CloudAgentRouting.validID($0) && PairedAndroidDeviceStore.permits($0) ? $0 : nil }
+        let ids = CloudCatchUpPolicy.targets(paired: paired, cloudOnly: Set(paired.filter(isCloudOnlyAgent)),
+                                             locallyReachable: local, callLine: callLine)
         // A lone local route with no stored pairing: keep the old bound-Agent behaviour.
         if ids.isEmpty, !localRoute, let bound = try? await cloudSyncTarget() { return [bound] }
         return ids.map { CloudCommandTarget(agentID: $0, routingVersion: 1) }

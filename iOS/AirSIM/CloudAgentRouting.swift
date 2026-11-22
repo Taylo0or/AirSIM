@@ -84,3 +84,22 @@ enum CloudAgentRouting {
         throw CloudCommandError.timeout
     }
 }
+
+/// Which paired lines must catch up SMS and call history through the Relay.
+///
+/// A line reached over a verified local route is polled directly; every other paired
+/// line asks the Relay. Cloud-only lines (voip.ms) have no local route at all, so they
+/// are always included — even while the Android Agent sits on the same Wi-Fi. The line
+/// that just carried a cloud call goes first so its record arrives soonest.
+/// (Regression: after upstream PR #46 the LAN route made the iPhone skip every cloud
+/// line, and voip.ms calls/SMS stopped reaching the history.)
+enum CloudCatchUpPolicy {
+    static func targets(paired: [String], cloudOnly: Set<String>,
+                        locallyReachable: Set<String>, callLine: String? = nil) -> [String] {
+        var result: [String] = []
+        for id in [callLine].compactMap({ $0 }) + paired where !result.contains(id) {
+            if id == callLine || cloudOnly.contains(id) || !locallyReachable.contains(id) { result.append(id) }
+        }
+        return result
+    }
+}
