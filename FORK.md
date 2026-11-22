@@ -35,7 +35,7 @@
 1. 自动测试：`sh android-standalone/test.sh`、`cd push-relay-worker && npm test`、iOS `AirSIMTests` 全量 + `AirSIMUITests`（已知 3 个老失败见下）。`CloudCatchUpPolicyTests` 锁定“每条线路都要能补拉”的规则。
 2. 真机：iPhone 在家（与 K40 同一 Wi-Fi）时，分别对 **K40 线路** 和 **voip.ms 线路** 各打一通电话、收一条短信，然后跑 `sh ~/.config/airsim/tools/airsim_history_check.sh`，确认两条线路都有新记录。
 3. 改了云端 / 局域网路由选择的，再在蜂窝网络（离开家里 Wi-Fi）下重复第 2 步。
-4. 发短信走 Root 的改动：用 `~/.config/airsim/tools`（`k40_sms_test.py <号码> <内容>`）经 Relay 让 K40 发一条到自己的 voip.ms 号码，看 K40 日志 `sms_privileged_resolved result=ok` 且 iPhone 收到。
+4. 发短信走 Root 的改动：用 `python3 -I ~/.config/airsim/tools/k40_sms_test.py <号码> <内容>` 经 Relay 让 K40 发一条到自己的 voip.ms 号码，看 K40 日志 `sms_privileged_resolved result=ok` 且 iPhone 收到。
 
 已知与本仓库无关的失败：`testBLEPushAdoptionPreservesPresentationAndUsesOnlyBLEBackend`、`testWatchDialOwnsSourceAndBlocksSecondPhoneDial`（上游基线）、`testOverlayControlAndPCMUseSystemRoutingNotWiFiOrWiredEthernet`（Mac 在 192.168.1.x 网段时）。
 
