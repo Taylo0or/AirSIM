@@ -3971,12 +3971,8 @@ final class AppModel: ObservableObject {
                 if !silently { errorMessage = nil }
                 return
             }
-            do {
-                try await syncCloudSMSFromAgent()
-                if !silently { errorMessage = nil }
-            } catch {
-                if !silently { errorMessage = "云端同步短信失败：\(error.localizedDescription)" }
-            }
+            await syncCloudCatchUp(sms: true, calls: false)
+            if !silently { errorMessage = nil }
             return
         }
         do {
@@ -3989,6 +3985,8 @@ final class AppModel: ObservableObject {
         } catch {
             if !silently { errorMessage = error.localizedDescription }
         }
+        // The LAN only reaches the Android Agent; cloud-only lines still sync via the Relay.
+        if CloudSignalingPreference.isEnabled() { await syncCloudCatchUp(sms: true, calls: false) }
     }
 
     private static let cloudSMSSyncCursorsKey = "airsim.cloud-sms-sync-cursors.v1"
@@ -3999,11 +3997,12 @@ final class AppModel: ObservableObject {
     /// command channel. Items arrive in APNs push shape (sealed when the pairing has an E2E
     /// key) and are deduplicated by delivery ID, so overlap with pushes is harmless.
     @discardableResult
-    func syncCloudSMSFromAgent(maximumPages: Int = 15) async throws -> Int {
+    func syncCloudSMSFromAgent(maximumPages: Int = 15, target: CloudCommandTarget? = nil) async throws -> Int {
         guard !cloudSMSSyncRunning else { return 0 }
         cloudSMSSyncRunning = true
         defer { cloudSMSSyncRunning = false }
-        let route = try await cloudSyncTarget()
+        let route: CloudCommandTarget
+        if let target { route = target } else { route = try await cloudSyncTarget() }
         var cursors = UserDefaults.standard.dictionary(forKey: Self.cloudSMSSyncCursorsKey) as? [String: String] ?? [:]
         var since = cursors[route.agentID]
         var imported = 0
@@ -4040,12 +4039,36 @@ final class AppModel: ObservableObject {
 
     /// Foreground catch-up: at most once a minute, silently, when only the cloud reaches the Agent.
     private func syncCloudSMSAutomaticallyIfDue() {
-        guard verifiedVoWLANAPI() == nil, CloudSignalingPreference.isEnabled(), CloudModePreference.isEnabled(),
+        guard CloudSignalingPreference.isEnabled(), CloudModePreference.isEnabled(),
               Date().timeIntervalSince(lastAutomaticCloudSMSSync) > 60 else { return }
         lastAutomaticCloudSMSSync = Date()
-        Task {
-            _ = try? await syncCloudSMSFromAgent()
-            _ = try? await syncCloudCallHistoryFromAgent()
+        Task { await syncCloudCatchUp(sms: true, calls: true) }
+    }
+
+    /// Agents whose SMS and call history only reach this iPhone through the Relay:
+    /// every paired line without a verified local route. Cloud-only lines (voip.ms)
+    /// always qualify, even while the Android Agent is on the LAN and is polled locally.
+    func cloudCatchUpTargets(including extra: String? = nil) async -> [CloudCommandTarget] {
+        guard CloudModePreference.isEnabled() else { return [] }
+        let localRoute = verifiedVoWLANAPI() != nil
+        var local = Set(localDevices.agentIDs.filter { localDevices.api(for: $0) != nil })
+        if localRoute, let bound = boundAgentID { local.insert(bound) }
+        var ids: [String] = []
+        for id in [extra].compactMap({ $0 }) + pairedDeviceHistory.map(\.id) where !ids.contains(id) {
+            guard CloudAgentRouting.validID(id), PairedAndroidDeviceStore.permits(id) else { continue }
+            if id == extra || isCloudOnlyAgent(id) || !local.contains(id) { ids.append(id) }
+        }
+        // A lone local route with no stored pairing: keep the old bound-Agent behaviour.
+        if ids.isEmpty, !localRoute, let bound = try? await cloudSyncTarget() { return [bound] }
+        return ids.map { CloudCommandTarget(agentID: $0, routingVersion: 1) }
+    }
+
+    /// Pulls SMS and/or call history from every cloud catch-up target; one failing line
+    /// does not stop the others.
+    func syncCloudCatchUp(sms: Bool, calls: Bool, including extra: String? = nil) async {
+        for target in await cloudCatchUpTargets(including: extra) {
+            if sms { _ = try? await syncCloudSMSFromAgent(target: target) }
+            if calls { _ = try? await syncCloudCallHistoryFromAgent(target: target) }
         }
     }
 
@@ -4056,11 +4079,12 @@ final class AppModel: ObservableObject {
     /// over VoWLAN. Pull the Agent's pending history through the Relay, store it like the
     /// local poll does, and acknowledge the stored ids on the next sync.
     @discardableResult
-    func syncCloudCallHistoryFromAgent() async throws -> Int {
+    func syncCloudCallHistoryFromAgent(target: CloudCommandTarget? = nil) async throws -> Int {
         guard !cloudCallHistorySyncRunning, CloudModePreference.isEnabled() else { return 0 }
         cloudCallHistorySyncRunning = true
         defer { cloudCallHistorySyncRunning = false }
-        let route = try await cloudSyncTarget()
+        let route: CloudCommandTarget
+        if let target { route = target } else { route = try await cloudSyncTarget() }
         var pending = UserDefaults.standard.dictionary(forKey: Self.cloudCallHistoryAckKey) as? [String: [String]] ?? [:]
         let records = try await VoIPPushController.shared.syncCloudCallHistory(
             ack: pending[route.agentID] ?? [], target: route)
@@ -4077,9 +4101,8 @@ final class AppModel: ObservableObject {
 
     /// Recents pull-to-refresh: the local poll covers VoWLAN; away from it, ask through the cloud.
     func refreshCallHistory() async {
-        guard verifiedVoWLANAPI() == nil else { restartPolling(); return }
-        do { try await syncCloudCallHistoryFromAgent() }
-        catch { errorMessage = "云端同步通话记录失败：\(error.localizedDescription)" }
+        if verifiedVoWLANAPI() != nil { restartPolling() }
+        await syncCloudCatchUp(sms: false, calls: true)
     }
 
     /// Imports cloud SMS pushes still listed in Notification Center. Pushes that arrived
@@ -4588,10 +4611,13 @@ final class AppModel: ObservableObject {
 
     private func clearLockedTransport() {
         if currentCallTransport == .cloud {
-            // The Agent writes its history record when Telecom removes the call.
+            // The Agent writes its history record when Telecom removes the call. Ask the
+            // line that carried it (a voip.ms call is not on the bound Android Agent).
+            let callAgent = IPhoneCloudCallSession.shared.call?.agentID
+                ?? callKit.currentIncomingPush?.agentID ?? pushedCallIdentity?.agentID
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .seconds(4))
-                _ = try? await self?.syncCloudCallHistoryFromAgent()
+                await self?.syncCloudCatchUp(sms: false, calls: true, including: callAgent)
             }
         }
         currentCallTransport = nil
