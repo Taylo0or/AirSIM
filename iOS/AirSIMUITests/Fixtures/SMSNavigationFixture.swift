@@ -28,6 +28,11 @@ struct SMSNavigationFixture {
         if NSClassFromString("XCTestCase") == nil {
             arguments[ConnectionModePreference.key] = AirSIMConnectionMode.bluetooth.rawValue
             arguments[CloudSignalingPreference.key] = false
+            // Since v0.9.8.27 saved paired devices stay listed while offline. Each UI fixture
+            // starts with none, so a device another fixture launch saved cannot leak in.
+            for key in ["airsim.paired-android-devices.v1", "airsim.forgotten-android-devices.v1"] {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
         }
         if ProcessInfo.processInfo.environment["AIRSIM_UI_SMS_SIM"] == "1" {
             let agentID = "sms-sim-fixture"

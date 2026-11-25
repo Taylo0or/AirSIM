@@ -219,6 +219,16 @@ private final class MemoryActivityStore: LiveActivityStore {
 }
 
 final class CallKitNumberPresentationTests: XCTestCase {
+    func testIMSHandleAndRawCallerNameDoNotLeakDomain() throws {
+        let raw = "sip:%2B8613800138000@ims.mnc000.mcc460.3gppnetwork.org;user=phone"
+        let update = CallKitNumberPresentation.update(number: raw, callerName: raw)
+        XCTAssertEqual(update.remoteHandle?.value, "+8613800138000")
+        XCTAssertEqual(update.remoteHandle?.type, .phoneNumber)
+        XCTAssertNil(update.localizedCallerName)
+        XCTAssertEqual(CallKitNumberPresentation.update(number: raw, callerName: "联系人").localizedCallerName, "联系人")
+        XCTAssertEqual(CallKitNumberPresentation.handle(number: "tel:10086").value, "10086")
+    }
+
     @MainActor
     func testIncomingPushPassesLiteralNumberToSystemWithoutRewritingPayload() throws {
         let call = try IncomingVoIPCall(userInfo: [
@@ -918,6 +928,8 @@ final class CloudStandbyLifecycleRegressionTests: XCTestCase {
     }
 
     func testForegroundIdleKeepsCloudDeviceCardWithoutRepeatingRelayQuery() async throws {
+        let restoreRecords = PairedDeviceRecordsIsolation.clear()
+        defer { restoreRecords() }
         let previous = ConnectionModePreference.selected(), binding = AndroidAgentBindingPreference.selected()
         ConnectionModePreference.set(.cloud); AndroidAgentBindingPreference.set(nil)
         defer { ConnectionModePreference.set(previous); AndroidAgentBindingPreference.set(binding) }
@@ -4647,7 +4659,7 @@ final class AirSIMTests: XCTestCase {
             deviceName: "Android A", defaults: defaults)
         XCTAssertEqual(VoWLANPairingRecordStore.records(defaults: defaults).count, 1)
         XCTAssertEqual(VoWLANPairingRecordStore.records(defaults: defaults).first?.id,
-                       VoWLANPairingRecordStore.pairingID(for: firstCredential))
+                       VoWLANPairingRecordStore.pairingID(for: firstCredential, agentID: "agent-a"))
 
         // Re-pairing the same Agent must replace its active secret, not add a
         // second stale record, while keeping the old address as history.
@@ -4656,7 +4668,7 @@ final class AirSIMTests: XCTestCase {
             deviceName: "Android A", defaults: defaults)
         let replaced = VoWLANPairingRecordStore.records(defaults: defaults)
         XCTAssertEqual(replaced.count, 1)
-        XCTAssertEqual(replaced.first?.id, VoWLANPairingRecordStore.pairingID(for: secondCredential))
+        XCTAssertEqual(replaced.first?.id, VoWLANPairingRecordStore.pairingID(for: secondCredential, agentID: "agent-a"))
         XCTAssertEqual(replaced.first?.endpoints.count, 2)
 
         let thirdCredential = try VoWLANCredential(secret: Data(repeating: 3, count: 32))
@@ -6314,6 +6326,18 @@ final class NetworkDiagnosticsTests: XCTestCase {
 }
 
 final class SIMSignalDisplayTests: XCTestCase {
+    func testUnavailableTransportRetainsAllNumbersButConfirmedRemovalClearsThem() throws {
+        let cached = (0..<8).map { index in
+            SIMSignalSummary(id:index,title:"SIM \(index+1)",signal:.init(level:4,observedAtMS:1795150000000),phoneNumber:"1380000000\(index)")
+        }
+        let offline = SIMSignalSummary.displayRows(live:nil,cached:cached)
+        XCTAssertEqual(offline.map(\.phoneNumber),cached.map(\.phoneNumber))
+        XCTAssertEqual(offline.map(\.title),cached.map(\.title))
+        XCTAssertTrue(offline.allSatisfy { $0.signal == nil })
+        XCTAssertTrue(SIMSignalSummary.displayRows(live:[],cached:cached).isEmpty)
+        XCTAssertEqual(try JSONDecoder().decode([SIMSignalSummary].self,from:JSONEncoder().encode(offline)),offline)
+    }
+
     func testDualSIMMappingAndLegacyDecode() throws {
         let json = #"[{"id":"b","label":"secondary","slot_index":1,"signal":{"level":1,"observed_at_ms":1795150000000}},{"id":"a","label":"primary","slot_index":0,"signal":{"level":4,"observed_at_ms":1795150000000}}]"#
         let slots = try JSONDecoder().decode([AndroidSIMSlot].self, from: Data(json.utf8))
@@ -6325,6 +6349,24 @@ final class SIMSignalDisplayTests: XCTestCase {
         let old = try JSONDecoder().decode(AndroidSIMSlot.self, from: Data(#"{"id":"old","label":"SIM"}"#.utf8))
         XCTAssertNil(old.signal)
         XCTAssertNil(AndroidSIMSlot.signalSummaries([old]).first?.signal)
+    }
+
+    func testSIMNumbersTravelWithTheirOwnSignalAndLegacySnapshotsStillDecode() throws {
+        let slots = try JSONDecoder().decode([AndroidSIMSlot].self, from: Data(#"[{"id":"second","label":"SIM","slot_index":1,"number":"13900000002","signal":{"level":1,"observed_at_ms":1795150000000}},{"id":"first","label":"SIM","slot_index":0,"number":"13800000001","signal":{"level":4,"observed_at_ms":1795150000000}}]"#.utf8))
+        let summaries = AndroidSIMSlot.signalSummaries(slots)
+        XCTAssertEqual(summaries.map(\.phoneNumber), ["13800000001", "13900000002"])
+        XCTAssertEqual(summaries.map { $0.signal?.level }, [4, 1])
+        XCTAssertEqual(try JSONDecoder().decode([SIMSignalSummary].self,
+            from: JSONEncoder().encode(summaries)), summaries)
+        let old = try JSONDecoder().decode(SIMSignalSummary.self, from: Data(#"{"id":0,"title":"SIM 1"}"#.utf8))
+        XCTAssertNil(old.phoneNumber)
+        let agent = AirSIMCallActivityAttributes.ContentState.AgentSummary(id:"a",name:"Phone",phoneNumber:nil,agentKind:nil,
+            vowlanOnline:true,bluetoothOnline:false,cloudOnline:false,isCurrent:true,simSignals:summaries)
+        let state = AirSIMCallActivityAttributes.ContentState(callID:"",number:"",displayName:"Phone",phase:.standby,
+            startedAt:Date(),transport:.vowlan,agents:[agent])
+        let stale = state.liveActivityDisplayState(isStale:true)
+        XCTAssertEqual(stale.agents?.first?.simSignals?.map(\.phoneNumber), ["13800000001", "13900000002"])
+        XCTAssertTrue(stale.agents?.first?.simSignals?.allSatisfy { $0.signal == nil } == true)
     }
 
     func testUnknownIsDistinctFromZeroAndMalformedSignalDoesNotHideSIM() throws {
@@ -6484,5 +6526,22 @@ final class CloudCatchUpPolicyTests: XCTestCase {
     func testNoDuplicates() {
         XCTAssertEqual(CloudCatchUpPolicy.targets(paired: [voipms, voipms, android], cloudOnly: [voipms],
                                                   locallyReachable: [], callLine: voipms), [voipms, android])
+    }
+}
+
+/// Since v0.9.8.27 the device list also shows paired devices saved on this iPhone. Tests that
+/// count devices must not see records left in UserDefaults by earlier tests in the same run.
+enum PairedDeviceRecordsIsolation {
+    private static let keys = ["airsim.paired-android-devices.v1", "airsim.forgotten-android-devices.v1"]
+
+    /// Clears the saved paired devices and returns a closure that restores them.
+    static func clear(_ defaults: UserDefaults = .standard) -> () -> Void {
+        let saved = keys.map { ($0, defaults.object(forKey: $0)) }
+        keys.forEach { defaults.removeObject(forKey: $0) }
+        return {
+            for (key, value) in saved {
+                if let value { defaults.set(value, forKey: key) } else { defaults.removeObject(forKey: key) }
+            }
+        }
     }
 }

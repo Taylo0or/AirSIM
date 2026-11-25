@@ -364,6 +364,8 @@ final class VoBLEMultiDeviceTests: XCTestCase {
     }
 
     func testUnboundBluetoothPeersExposeDialDeviceSelectionAndBindOnlyChosenPhone() {
+        let restoreRecords = PairedDeviceRecordsIsolation.clear()
+        defer { restoreRecords() }
         let previous = ConnectionModePreference.selected(), binding = AndroidAgentBindingPreference.selected()
         ConnectionModePreference.set(.bluetooth); AndroidAgentBindingPreference.set(nil)
         defer { ConnectionModePreference.set(previous); AndroidAgentBindingPreference.set(binding) }

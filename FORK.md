@@ -39,6 +39,12 @@
 
 已知与本仓库无关的失败：`testBLEPushAdoptionPreservesPresentationAndUsesOnlyBLEBackend`、`testWatchDialOwnsSourceAndBlocksSecondPhoneDial`（上游基线）、`testOverlayControlAndPCMUseSystemRoutingNotWiFiOrWiredEthernet`（Mac 在 192.168.1.x 网段时）。
 
+- 2026-11-24 合并上游 develop `0be80a0`（v0.9.8.27）。冲突处理：
+  - 上游按其用户要求把 PhoneViews／RootView／SMSNavigationUITests 整份回退到 `991162c`（撤回 PR #47 界面，删掉收起通话和服务号图标）。核对后这三个文件在上游只有回退、没有功能改动，全部保留本仓库版本；上游删除的 `SMSServiceArtwork.swift` 与 `SMSServiceAssets.xcassets` 及其工程引用恢复。
+  - 设置页同时保留本仓库的设备备注名和上游新增的“删除端点”。
+  - 上游让设备列表保留本机保存过的已配对设备（离线也显示），导致按设备数计数的测试互相污染：`PairedDeviceRecordsIsolation` 隔离两个单元测试，界面测试夹具每次启动清空已保存设备。
+  - 采纳：端点管理、IMS SIP/TEL 来电号码规范化、按 SIM 显示号码和信号、设备数量不设上限、PR #46 日期比较的运行时兼容修复。
+
 ## 构建
 
 ```sh
