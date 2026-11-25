@@ -803,8 +803,8 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
-		F2E2E0000000000000000001 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = AirSIMNotificationService/AirSIMNotificationService.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 188; DEVELOPMENT_TEAM = ""; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = AirSIMNotificationService/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 16.3; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 0.9.8; PRODUCT_BUNDLE_IDENTIFIER = com.taylent.airsim.notificationservice; PRODUCT_NAME = AirSIMNotificationService; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
-		F2E2E0000000000000000002 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = AirSIMNotificationService/AirSIMNotificationService.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 188; DEVELOPMENT_TEAM = ""; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = AirSIMNotificationService/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 16.3; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 0.9.8; PRODUCT_BUNDLE_IDENTIFIER = com.taylent.airsim.notificationservice; PRODUCT_NAME = AirSIMNotificationService; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
+		F2E2E0000000000000000001 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = AirSIMNotificationService/AirSIMNotificationService.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 188; DEVELOPMENT_TEAM = 9WY82DH347; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = AirSIMNotificationService/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 16.3; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 0.9.8; PRODUCT_BUNDLE_IDENTIFIER = com.taylent.airsim.notificationservice; PRODUCT_NAME = AirSIMNotificationService; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
+		F2E2E0000000000000000002 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = AirSIMNotificationService/AirSIMNotificationService.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 188; DEVELOPMENT_TEAM = 9WY82DH347; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = AirSIMNotificationService/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 16.3; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 0.9.8; PRODUCT_BUNDLE_IDENTIFIER = com.taylent.airsim.notificationservice; PRODUCT_NAME = AirSIMNotificationService; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
         FE2000000000000000000002 = {isa = XCBuildConfiguration; name = Debug; buildSettings = {
             GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = com.taylent.airsim.uitests;
             PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; IPHONEOS_DEPLOYMENT_TARGET = 16.3;
@@ -853,7 +853,7 @@
 				CODE_SIGN_ENTITLEMENTS = "$(AIRSIM_PUSH_ENTITLEMENTS)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 188;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 9WY82DH347;
 				AIRSIM_APNS_ENVIRONMENT = sandbox;
 				AIRSIM_PUSH_ENTITLEMENTS = "AirSIM/AirSIM.entitlements";
 				AIRSIM_PUSH_RELAY_URL = "https://airsim.taylent.com";
@@ -879,7 +879,7 @@
 				CODE_SIGN_ENTITLEMENTS = "$(AIRSIM_PUSH_ENTITLEMENTS)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 188;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 9WY82DH347;
 				AIRSIM_APNS_ENVIRONMENT = production;
 				AIRSIM_PUSH_ENTITLEMENTS = "AirSIM/AirSIM.entitlements";
 				AIRSIM_PUSH_RELAY_URL = "https://airsim.taylent.com";
@@ -904,7 +904,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 188;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 9WY82DH347;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = AirSIMLiveActivityExtension/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.3;
@@ -931,7 +931,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 188;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 9WY82DH347;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = AirSIMLiveActivityExtension/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.3;
@@ -956,7 +956,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 9WY82DH347;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.taylent.airsim.tests;
@@ -972,7 +972,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 9WY82DH347;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.taylent.airsim.tests;
@@ -991,7 +991,7 @@
 				CODE_SIGN_ENTITLEMENTS = "AirSIMWatchApp/AirSIMWatchApp.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 188;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 9WY82DH347;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "AirSIMWatchApp/Info.plist";
@@ -1020,7 +1020,7 @@
 				CODE_SIGN_ENTITLEMENTS = "AirSIMWatchApp/AirSIMWatchApp.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 188;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 9WY82DH347;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "AirSIMWatchApp/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = AirSIM;
