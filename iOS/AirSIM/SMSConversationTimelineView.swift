@@ -996,9 +996,9 @@ final class SMSAttachmentView: UIView {
 }
 
 
-/// SMS timeline colors: accent outgoing bubbles, muted incoming bubbles on the paper backdrop.
+/// SMS timeline colors: accent outgoing bubbles, muted incoming bubbles on a plain white / black page.
 enum SMSThemeColors {
-    static var background: UIColor { WarmPalette.background }
+    static var background: UIColor { WarmPalette.plain }
     static var outgoingBubble: UIColor { AppTheme.current.uiAccent }
     static var incomingBubble: UIColor { WarmPalette.soft }
     static var outgoingText: UIColor { WarmPalette.onAccent }

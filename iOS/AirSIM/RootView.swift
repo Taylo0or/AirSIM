@@ -333,12 +333,13 @@ struct RootView: View {
     }
 }
 
-/// Page backdrop: paper white / charcoal (docs/design/warm-2026-11-20/DESIGN.md §3.1).
+/// Grouped backdrop (settings, home, 我的): system-style light gray / black.
 struct PhoneBackdrop: View {
     var body: some View { Color(uiColor: WarmPalette.background).ignoresSafeArea() }
 }
 
-/// Design tokens: paper backdrop, flat lists; the theme (暖橙 / 墨绿 / 天蓝) only picks the accent family.
+/// Design tokens (revision 2026-11-25): neutral system grays, the theme (暖橙 / 墨绿 / 天蓝) only picks
+/// the accent, which marks selection and links — not every icon. No cream paper, no tinted surfaces.
 enum WarmPalette {
     private static func rgb(_ hex: UInt32, _ alpha: CGFloat = 1) -> UIColor {
         UIColor(red: CGFloat((hex >> 16) & 0xff) / 255, green: CGFloat((hex >> 8) & 0xff) / 255,
@@ -347,32 +348,33 @@ enum WarmPalette {
     private static func dynamic(_ light: UIColor, _ dark: UIColor) -> UIColor {
         UIColor { $0.userInterfaceStyle == .dark ? dark : light }
     }
-    static let background = dynamic(rgb(0xF7F5F1), rgb(0x161615))
-    static let card = dynamic(.white, rgb(0x222220))            // surface
-    static let cardBorder = dynamic(rgb(0xDCD8D0), rgb(0x3D3D38)) // separator
-    static let soft = dynamic(rgb(0xEEEBE5), rgb(0x30302D))       // surfaceMuted: search, segments, incoming bubble
+    static let background = dynamic(rgb(0xF2F2F7), rgb(0x000000)) // grouped pages and settings
+    static let plain = dynamic(.white, rgb(0x000000))              // list pages, SMS timeline, tab bar
+    static let card = dynamic(.white, rgb(0x1C1C1E))               // grouped cells, sheets
+    static let raised = dynamic(.white, rgb(0x3A3A3C))             // selected segment
+    static let cardBorder = dynamic(rgb(0xE0E0E5), rgb(0x38383A))  // separator
+    static let soft = dynamic(rgb(0xEEEEF0), rgb(0x232325))        // search, segment track, incoming bubble
     static var accentSoft: UIColor { AppTheme.current.uiAccentSoft }
     static var onAccent: UIColor { AppTheme.current.uiOnAccent }
-    static let textPrimary = dynamic(rgb(0x1E1D1B), rgb(0xF3F1EC))
-    static let textSecondary = dynamic(rgb(0x66635E), rgb(0xABA7A0))
-    static let textDisabled = dynamic(rgb(0x99948D), rgb(0x726F69))
-    static let controlBorder = dynamic(rgb(0x8B867E), rgb(0x858078))
-    static let positive = dynamic(rgb(0x1F7654), rgb(0x78C9A0))
-    static let danger = dynamic(rgb(0xBF3535), rgb(0xFF8D88))
-    static let warningText = dynamic(rgb(0x84520B), rgb(0xE9C17A))
-    static let warningSurface = dynamic(rgb(0xF3E9D8), rgb(0x332B1E))
-    static let disabledFill = dynamic(rgb(0xE4E0D9), rgb(0x353531))
+    static let textPrimary = dynamic(rgb(0x1C1C1E), rgb(0xF5F5F7))
+    static let textSecondary = dynamic(rgb(0x6C6C70), rgb(0x98989F))
+    static let textDisabled = dynamic(rgb(0xAEAEB2), rgb(0x636366))
+    static let controlBorder = dynamic(rgb(0xC7C7CC), rgb(0x545458))
+    static let positive = dynamic(rgb(0x248A3D), rgb(0x30D158))
+    static let danger = dynamic(rgb(0xD70015), rgb(0xFF453A))
+    static let call = dynamic(rgb(0x34C759), rgb(0x30D158))       // dial button only
+    static let avatar = dynamic(rgb(0xB4B5BD), rgb(0x56565C))     // initials / unknown-number avatar
+    static let warningText = dynamic(rgb(0x8A5300), rgb(0xFFCC66))
+    static let warningSurface = dynamic(rgb(0xFFF4DE), rgb(0x2E2614))
+    static let disabledFill = dynamic(rgb(0xE5E5EA), rgb(0x2C2C2E))
 }
 
-/// Surface block: white / #222220, hairline edge, no shadow.
+/// Grouped cell block: white / #1C1C1E on the grouped backdrop. No border, no shadow.
 struct WarmCardSurface: ViewModifier {
     let cornerRadius: CGFloat
-    @Environment(\.displayScale) private var displayScale
     func body(content: Content) -> some View {
-        let shape = RoundedRectangle(cornerRadius: min(cornerRadius, 12), style: .continuous)
-        content
-            .background(Color(uiColor: WarmPalette.card), in: shape)
-            .overlay(shape.strokeBorder(Color(uiColor: WarmPalette.cardBorder), lineWidth: 1 / max(displayScale, 1)))
+        content.background(Color(uiColor: WarmPalette.card),
+                           in: RoundedRectangle(cornerRadius: min(cornerRadius, 12), style: .continuous))
     }
 }
 

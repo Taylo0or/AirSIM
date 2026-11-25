@@ -1,17 +1,21 @@
 import SwiftUI
 import UIKit
 
-// AirSIM 的 App 外壳，按 Codex 设计稿实现（docs/design/warm-2026-11-20/DESIGN.md）。
-// 原则：号码优先、平面列表、强调色只用于操作与选中（主题决定强调色：暖橙 / 墨绿 / 天蓝）；系统字体，无阴影、无渐变。
-// 通话界面、短信会话页、设置子页面沿用原有实现。
+// AirSIM 的 App 外壳。结构来自 Codex 设计稿（docs/design/warm-2026-11-20/DESIGN.md），
+// 视觉按 2026-11-25 修订（同目录 REVISION-2026-11-25.md）：中性系统灰、强调色只标选中与链接、
+// 信息靠排版分层，不靠卡片、色块和图标。通话界面、短信会话页、设置子页面沿用原有实现。
 
 // MARK: - Tokens
 
 enum Warm {
     static var accent: Color { Color(uiColor: AppTheme.current.uiAccent) }
     static let background = Color(uiColor: WarmPalette.background)
+    static let plain = Color(uiColor: WarmPalette.plain)
     static let surface = Color(uiColor: WarmPalette.card)
+    static let raised = Color(uiColor: WarmPalette.raised)
     static let muted = Color(uiColor: WarmPalette.soft)
+    static let call = Color(uiColor: WarmPalette.call)
+    static let avatar = Color(uiColor: WarmPalette.avatar)
     static let text = Color(uiColor: WarmPalette.textPrimary)
     static let secondary = Color(uiColor: WarmPalette.textSecondary)
     static let disabled = Color(uiColor: WarmPalette.textDisabled)
@@ -27,8 +31,25 @@ enum Warm {
 }
 
 extension View {
-    /// Surface block (current line, settings groups): radius 12, hairline edge, no shadow.
+    /// Grouped cell block (line board, settings groups): radius 12, no border, no shadow.
     func warmCard(_ radius: CGFloat = 12) -> some View { modifier(WarmCardSurface(cornerRadius: radius)) }
+
+    /// A row of the shell's plain Lists (recents, voicemail, messages): own insets, plain background,
+    /// and the system separator only where `separator` asks for one.
+    func warmListRow(leading: CGFloat = 20, trailing: CGFloat = 20, separator: Bool = false) -> some View {
+        listRowInsets(EdgeInsets(top: 0, leading: leading, bottom: 0, trailing: trailing))
+            .listRowBackground(Warm.plain)
+            .listRowSeparator(separator ? .visible : .hidden, edges: separator ? .bottom : .all)
+            .listRowSeparatorTint(Warm.separator)
+    }
+
+    /// The List itself: plain style on the page's own background, rows as tall as their content.
+    func warmPlainList() -> some View {
+        listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(Warm.plain)
+            .environment(\.defaultMinListRowHeight, 1)
+    }
 }
 
 /// One physical pixel separator.
@@ -86,6 +107,8 @@ struct WarmLine: Identifiable, Equatable {
     let isVoipms: Bool
     let route: String
     let online: Bool
+    /// Fresh 0–4 bars; nil when unknown or stale (never shown as zero bars).
+    var signal: Int? = nil
     var id: String { "\(agentID)|\(slotID ?? "-")" }
     var title: String { number.map { WarmPhone.format($0) } ?? "号码未知" }
     /// "voip.ms", "家中 K40 · 中国移动 · SIM 1".
@@ -117,9 +140,11 @@ extension AppModel {
                 return [WarmLine(agentID: agent.id, slotID: nil, slotIndex: nil, number: agent.phoneNumber, deviceName: agent.deviceName,
                                  carrier: nil, isVoipms: agent.isVoipms, route: agent.routeTitle, online: agent.isReachable)]
             }
+            let now = Date()
             return slots.map {
                 WarmLine(agentID: agent.id, slotID: $0.id, slotIndex: $0.slotIndex, number: $0.displayNumber, deviceName: agent.deviceName,
-                         carrier: $0.carrierName, isVoipms: agent.isVoipms, route: agent.routeTitle, online: agent.isReachable)
+                         carrier: $0.carrierName, isVoipms: agent.isVoipms, route: agent.routeTitle, online: agent.isReachable,
+                         signal: $0.signal?.freshLevel(at: now))
             }
         }
     }
@@ -176,6 +201,20 @@ extension AppModel {
         let device = pairedAndroidAgents.first { $0.id == agentID }?.deviceName
         return device.map { "\($0) · \(trimmed)" } ?? trimmed
     }
+
+    /// Compact line tag for list rows ("尾号 0111", "家中 K40 · SIM 1"); nil with a single line,
+    /// where naming the line adds nothing. Details and pickers keep the full number.
+    func warmLineTag(agentID: String?, slot: String?) -> String? {
+        guard warmLines.count > 1 else { return nil }
+        let label = warmSourceLabel(agentID: agentID, slot: slot)
+        guard label != "线路未知" else { return nil }
+        var number: String? = label.hasPrefix("+") || label.first?.isNumber == true ? label : nil
+        if number == nil, let slot, slot.hasPrefix("SIM "), let index = Int(slot.dropFirst(4)) {
+            number = warmLine(agentID: agentID, slotIndex: index - 1)?.number
+        }
+        let digits = WarmPhone.digits(number ?? "")
+        return digits.count >= 4 ? "尾号 \(digits.suffix(4))" : label
+    }
 }
 
 /// 未听 is separate from SMS 未读: only a successful playback marks a voicemail heard.
@@ -186,6 +225,13 @@ enum WarmHeardVoicemails {
         var heard = UserDefaults.standard.stringArray(forKey: key) ?? []
         guard !heard.contains(id) else { return }
         heard.append(id)
+        UserDefaults.standard.set(Array(heard.suffix(500)), forKey: key)
+    }
+    /// "全部标为已读": an explicit user choice, so it may mark unplayed voicemails heard.
+    static func markAllHeard(_ ids: [String]) {
+        var heard = UserDefaults.standard.stringArray(forKey: key) ?? []
+        let known = Set(heard)
+        heard += ids.filter { !known.contains($0) }
         UserDefaults.standard.set(Array(heard.suffix(500)), forKey: key)
     }
 }
@@ -251,21 +297,61 @@ struct WarmIconButton: View {
     }
 }
 
+/// Small gray group caption ("今天", "线路"), the way system lists label sections.
 struct WarmSectionTitle: View {
     let title: String
     var action: (title: String, run: () -> Void)? = nil
     var body: some View {
-        HStack {
-            Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(Warm.text).accessibilityAddTraits(.isHeader)
+        HStack(alignment: .lastTextBaseline) {
+            Text(title).font(.footnote.weight(.medium)).foregroundStyle(Warm.secondary).accessibilityAddTraits(.isHeader)
             Spacer()
             if let action {
                 Button(action.title, action: action.run)
-                    .font(.subheadline.weight(.semibold))
+                    .font(.footnote)
                     .foregroundStyle(Warm.accent)
-                    .frame(minHeight: 44)
+                    .frame(minHeight: 32)
             }
         }
-        .frame(minHeight: 44)
+        .frame(minHeight: 32, alignment: .bottom)
+        .padding(.bottom, 6)
+    }
+}
+
+/// Four ascending bars like the status bar. Unknown / stale signal draws all bars faint, never "0 bars".
+struct WarmSignalBars: View {
+    let level: Int?
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 2) {
+            ForEach(0..<4, id: \.self) { index in
+                RoundedRectangle(cornerRadius: 1, style: .continuous)
+                    .fill(level.map { index < $0 } == true ? Warm.text : Warm.disabled.opacity(0.45))
+                    .frame(width: 3, height: CGFloat(4 + index * 3))
+            }
+        }
+        .frame(width: 18, height: 13, alignment: .bottomLeading)
+        .accessibilityElement()
+        .accessibilityLabel(level.map { "信号 \($0) 格" } ?? "信号未知")
+    }
+}
+
+/// Contact-card style quick action: glyph over a short label, accent on a muted tile.
+struct WarmActionTile: View {
+    let systemImage: String
+    let title: String
+    let action: () -> Void
+    @Environment(\.isEnabled) private var isEnabled
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                Image(systemName: systemImage).font(.system(size: 19, weight: .regular)).frame(height: 22)
+                Text(title).font(.caption.weight(.medium))
+            }
+            .foregroundStyle(isEnabled ? Warm.accent : Warm.disabled)
+            .frame(maxWidth: .infinity, minHeight: 58)
+            .background(Warm.muted, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -279,17 +365,6 @@ struct WarmRouteLabel: View {
             Text(route).font(.caption).foregroundStyle(Warm.secondary)
         }
         .accessibilityElement(children: .combine)
-    }
-}
-
-struct WarmDefaultTag: View {
-    var body: some View {
-        Text("默认")
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(Warm.accent)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Warm.accentSoft, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
     }
 }
 
@@ -307,19 +382,6 @@ struct WarmPrimaryButtonStyle: ButtonStyle {
                     RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.black.opacity(0.1))
                 }
             }
-    }
-}
-
-struct WarmSecondaryButtonStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var isEnabled
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.callout.weight(.semibold))
-            .foregroundStyle(isEnabled ? Warm.text : Warm.disabled)
-            .padding(.horizontal, 16)
-            .frame(maxWidth: .infinity, minHeight: 48)
-            .background(configuration.isPressed ? Warm.muted : Color.clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(isEnabled ? Warm.controlBorder : Warm.separator, lineWidth: 1))
     }
 }
 
@@ -526,6 +588,7 @@ struct WarmShellView: View {
         }
         .id(settings.theme)
         // One tab bar for the whole shell; each root reserves its height (WarmTabBarSpace).
+        // Every root page paints its own background (grouped gray or plain).
         .overlay(alignment: .bottom) {
             if showsTabBar {
                 tabBar.background(GeometryReader { proxy in
@@ -585,10 +648,10 @@ struct WarmTabBar: View {
                                         Text(count > 99 ? "99+" : "\(count)")
                                             .font(.system(size: 10, weight: .semibold))
                                             .monospacedDigit()
-                                            .foregroundStyle(Warm.onAccent)
+                                            .foregroundStyle(.white)
                                             .padding(.horizontal, 4)
                                             .frame(minWidth: 16, minHeight: 16)
-                                            .background(Warm.accent, in: Capsule())
+                                            .background(Warm.danger, in: Capsule())
                                             .offset(x: 11, y: -4)
                                     }
                                 }
@@ -604,7 +667,7 @@ struct WarmTabBar: View {
                 }
             }
         }
-        .background(Warm.surface.ignoresSafeArea(edges: .bottom))
+        .background(Warm.plain.ignoresSafeArea(edges: .bottom))
     }
 }
 
@@ -671,9 +734,11 @@ struct WarmLinePicker: View {
         return Button {
             if model.warmSelect(line) { dismiss() }
         } label: {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(line.title).font(.body).monospacedDigit().foregroundStyle(disabled ? Warm.disabled : Warm.text)
+            HStack(spacing: 14) {
+                WarmSignalBars(level: line.online ? line.signal : nil)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(line.title).font(selected ? .body.weight(.semibold) : .body).monospacedDigit()
+                        .foregroundStyle(disabled ? Warm.disabled : Warm.text)
                     Text(line.source).font(.subheadline).foregroundStyle(Warm.secondary)
                     if blockedOffline {
                         Text("设备离线，暂时无法拨号或发送短信").font(.caption).foregroundStyle(Warm.warningText)
@@ -684,7 +749,7 @@ struct WarmLinePicker: View {
                     Image(systemName: "checkmark").font(.system(size: 17, weight: .semibold)).foregroundStyle(Warm.accent)
                 }
             }
-            .frame(minHeight: 72)
+            .frame(minHeight: 60)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -695,6 +760,8 @@ struct WarmLinePicker: View {
 
 // MARK: - Home (P01, P15)
 
+/// Home is the line board: every line with its signal and the default checkmark, then the devices.
+/// Calling and texting live in their tabs; missed / unread counts live on the tab badges.
 struct WarmHomeView: View {
     @EnvironmentObject private var model: AppModel
     let actions: WarmActions
@@ -703,18 +770,16 @@ struct WarmHomeView: View {
         let agents = model.pairedAndroidAgents
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                WarmPageHeader(title: "AirSIM") {
-                    WarmIconButton(systemName: "plus", label: "添加设备") { actions.openSettings([.add]) }
-                }
+                WarmPageHeader(title: "AirSIM") { EmptyView() }
                 if agents.isEmpty {
                     WarmEmptyState(systemImage: "simcard", title: "还没有线路",
                                    detail: "添加安卓手机或 voip.ms 号码，在这台 iPhone 上打电话、收短信。",
                                    actionTitle: "添加设备") { actions.openSettings([.add]) }
                 } else {
-                    content.padding(.horizontal, 20)
+                    content.padding(.horizontal, 16)
                 }
             }
-            .padding(.bottom, 8)
+            .padding(.bottom, 16)
         }
         .background(Warm.background.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
@@ -722,135 +787,96 @@ struct WarmHomeView: View {
 
     @ViewBuilder
     private var content: some View {
+        let lines = model.warmLines
         let current = model.warmCurrentLine
-        let others = model.warmLines.filter { $0 != current }
         let agents = model.pairedAndroidAgents
         VStack(alignment: .leading, spacing: 0) {
-            WarmSectionTitle(title: "当前线路", action: ("切换", { actions.pickLine(.defaultLine) }))
-            if let current { currentBlock(current) }
-            summary.padding(.top, 8)
-            if !others.isEmpty {
-                WarmSectionTitle(title: "其他线路").padding(.top, 16)
-                ForEach(Array(others.prefix(3).enumerated()), id: \.element.id) { index, line in
-                    Button { model.warmSelect(line) } label: { lineRow(line) }
+            WarmSectionTitle(title: "线路").padding(.horizontal, 4)
+            VStack(spacing: 0) {
+                ForEach(Array(lines.enumerated()), id: \.element.id) { index, line in
+                    lineRow(line, isDefault: line == current)
+                    if index < lines.count - 1 { WarmHairline().padding(.leading, 48) }
+                }
+            }
+            .warmCard()
+            Text(model.warmInCall ? "通话中不能切换默认线路。" : "打勾的是默认线路，用于拨号和新建短信。")
+                .font(.footnote).foregroundStyle(Warm.secondary)
+                .padding(.horizontal, 4).padding(.top, 8)
+
+            WarmSectionTitle(title: "设备").padding(.horizontal, 4).padding(.top, 24)
+            VStack(spacing: 0) {
+                ForEach(agents) { agent in
+                    Button { actions.openSettings([.connections, .device(agent.id)]) } label: { deviceRow(agent) }
                         .buttonStyle(.plain)
-                        .accessibilityHint("设为默认线路")
-                    if index < min(others.count, 3) - 1 { WarmHairline() }
+                    WarmHairline().padding(.leading, 16)
                 }
-                if others.count > 3 {
-                    Button("查看全部线路") { actions.pickLine(.defaultLine) }
-                        .font(.subheadline.weight(.semibold)).foregroundStyle(Warm.accent).frame(minHeight: 44)
+                Button { actions.openSettings([.add]) } label: {
+                    Text("添加设备").font(.body).foregroundStyle(Warm.accent)
+                        .padding(.horizontal, 16)
+                        .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
             }
-            WarmSectionTitle(title: "设备", action: ("管理", { actions.openSettings([.connections]) })).padding(.top, 16)
-            ForEach(Array(agents.prefix(3).enumerated()), id: \.element.id) { index, agent in
-                Button { actions.openSettings([.connections, .device(agent.id)]) } label: { deviceRow(agent) }
-                    .buttonStyle(.plain)
-                if index < min(agents.count, 3) - 1 { WarmHairline() }
-            }
-            if agents.count > 3 {
-                Button("查看全部设备") { actions.openSettings([.connections]) }
-                    .font(.subheadline.weight(.semibold)).foregroundStyle(Warm.accent).frame(minHeight: 44)
-            }
+            .warmCard()
         }
     }
 
-    private func currentBlock(_ line: WarmLine) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(line.title)
-                .font(.title2.weight(.semibold))
-                .monospacedDigit()
-                .foregroundStyle(Warm.text)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityLabel("当前线路 \(line.title)")
-            HStack(spacing: 8) {
-                Text(line.source).font(.subheadline).foregroundStyle(Warm.secondary).lineLimit(2)
-                Text("·").font(.subheadline).foregroundStyle(Warm.secondary)
-                WarmRouteLabel(route: line.route, online: line.online)
-                Spacer(minLength: 4)
-                WarmDefaultTag()
-            }
-            .padding(.top, 8)
-            if !line.online {
-                Text("设备离线，暂时无法拨号或发送短信").font(.subheadline).foregroundStyle(Warm.warningText).padding(.top, 8)
-            }
-            HStack(spacing: 12) {
-                Button { actions.openTab(.dial) } label: { Label("拨号", systemImage: "phone") }
-                    .buttonStyle(WarmPrimaryButtonStyle())
-                Button { actions.compose(nil) } label: { Label("发短信", systemImage: "message") }
-                    .buttonStyle(WarmSecondaryButtonStyle())
-            }
-            .disabled(!line.online)
-            .padding(.top, 16)
-        }
-        .padding(16)
-        .warmCard()
-    }
-
-    @ViewBuilder
-    private var summary: some View {
-        let missed = model.unseenMissedCallIDs.count
-        let unread = model.warmUnreadConversations
-        if missed > 0 || unread > 0 {
-            HStack(spacing: 20) {
-                if missed > 0 {
-                    summaryLink(icon: "phone.arrow.down.left", title: "未接来电", count: missed) { actions.openTab(.recents) }
+    private func lineRow(_ line: WarmLine, isDefault: Bool) -> some View {
+        Button { model.warmSelect(line) } label: {
+            HStack(spacing: 14) {
+                WarmSignalBars(level: line.online ? line.signal : nil)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(line.title)
+                        .font(isDefault ? .body.weight(.semibold) : .body)
+                        .monospacedDigit()
+                        .foregroundStyle(Warm.text)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 0) {
+                        Text(line.source).foregroundStyle(Warm.secondary)
+                        if !line.online { Text(" · 离线").foregroundStyle(Warm.warningText) }
+                    }
+                    .font(.subheadline)
+                    .lineLimit(2)
                 }
-                if unread > 0 {
-                    summaryLink(icon: "message", title: "未读短信", count: unread) { actions.openTab(.messages) }
+                Spacer(minLength: 8)
+                if isDefault {
+                    Image(systemName: "checkmark").font(.system(size: 16, weight: .semibold)).foregroundStyle(Warm.accent)
                 }
-                Spacer()
             }
-        }
-    }
-
-    private func summaryLink(icon: String, title: String, count: Int, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: icon).font(.system(size: 14)).foregroundStyle(Warm.secondary)
-                Text(title).font(.subheadline).foregroundStyle(Warm.text)
-                Text("\(count)").font(.subheadline.weight(.semibold)).monospacedDigit().foregroundStyle(Warm.accent)
-            }
-            .frame(minHeight: 44)
+            .padding(.horizontal, 16)
+            .frame(minHeight: 60)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(title) \(count)")
-    }
-
-    private func lineRow(_ line: WarmLine) -> some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(line.title).font(.body).monospacedDigit().foregroundStyle(Warm.text)
-                Text(line.source).font(.subheadline).foregroundStyle(Warm.secondary)
+        .accessibilityLabel("\(line.title)，\(line.source)\(line.online ? "" : "，离线")")
+        .accessibilityAddTraits(isDefault ? [.isSelected, .isButton] : .isButton)
+        .accessibilityHint(isDefault ? "" : "设为默认线路")
+        .contextMenu {
+            if let number = line.number {
+                Button { UIPasteboard.general.string = number } label: { Label("复制号码", systemImage: "doc.on.doc") }
             }
-            Spacer(minLength: 8)
-            WarmRouteLabel(route: line.route, online: line.online)
+            if !isDefault {
+                Button { model.warmSelect(line) } label: { Label("设为默认线路", systemImage: "checkmark") }
+            }
         }
-        .frame(minHeight: 64)
-        .contentShape(Rectangle())
     }
 
     private func deviceRow(_ agent: AndroidAgentPresentation) -> some View {
-        let lines = model.simSlots(for: agent.id).count
         let battery = agent.isVoipms ? nil : model.androidBattery(for: agent.id)
         return HStack(alignment: .center, spacing: 12) {
-            Image(systemName: agent.isVoipms ? "network" : "smartphone")
-                .font(.system(size: 20)).foregroundStyle(Warm.secondary).frame(width: 24)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(agent.deviceName).font(.body).foregroundStyle(Warm.text).lineLimit(2)
-                Text("\(agent.isVoipms ? "voip.ms" : "安卓") · \(max(lines, 1)) 条线路").font(.subheadline).foregroundStyle(Warm.secondary)
-            }
+            Text(agent.deviceName).font(.body).foregroundStyle(Warm.text).lineLimit(1)
             Spacer(minLength: 8)
-            HStack(spacing: 4) {
-                WarmRouteLabel(route: agent.routeTitle, online: agent.isReachable)
-                if let battery {
-                    Text("· \(battery.percent)%").font(.caption).monospacedDigit().foregroundStyle(Warm.secondary)
-                }
+            if agent.isReachable {
+                Text([agent.routeTitle, battery.map { "电量 \($0.percent)%" }].compactMap { $0 }.joined(separator: " · "))
+                    .font(.subheadline).monospacedDigit().foregroundStyle(Warm.secondary).lineLimit(1)
+            } else {
+                Text("离线").font(.subheadline).foregroundStyle(Warm.warningText)
             }
-            Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(Warm.disabled)
+            Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Warm.disabled)
         }
-        .frame(minHeight: 64)
+        .padding(.horizontal, 16)
+        .frame(minHeight: 48)
         .contentShape(Rectangle())
     }
 }
@@ -872,26 +898,29 @@ struct WarmCallsView: View {
         return model.warmVoicemails.filter { !heard.contains($0.id) }.count
     }
 
-    private var status: (route: String, online: Bool) {
-        if model.warmInCall { return ("通话中", true) }
-        guard let line = model.warmCurrentLine else { return ("无线路", false) }
-        return (line.route, line.online)
+    /// Clears the 通话 badge (missed calls) and the 语音信箱 count (unheard voicemails) in one go.
+    private func markAllRead() {
+        model.markMissedCallsSeen()
+        WarmHeardVoicemails.markAllHeard(model.warmVoicemails.map(\.id))
+        NotificationCenter.default.post(name: SMSAudioPlayback.didChange, object: nil)
     }
 
     var body: some View {
         NavigationStack(path: $path) {
             VStack(spacing: 0) {
                 WarmPageHeader(title: "通话") {
-                    if segment == .voicemail, !model.warmVoicemails.isEmpty {
-                        Menu {
-                            Button("清空全部语音留言", role: .destructive) { confirmingVoicemailClear = true }
-                        } label: {
-                            Image(systemName: "ellipsis").font(.system(size: 20)).foregroundStyle(Warm.accent).frame(width: 44, height: 44)
+                    Menu {
+                        Button { markAllRead() } label: { Label("全部标为已读", systemImage: "checkmark.circle") }
+                            .disabled(model.unseenMissedCallIDs.isEmpty && unheardVoicemails == 0)
+                        if segment == .voicemail, !model.warmVoicemails.isEmpty {
+                            Button(role: .destructive) { confirmingVoicemailClear = true } label: {
+                                Label("清空全部语音留言", systemImage: "trash")
+                            }
                         }
-                        .accessibilityLabel("更多操作")
-                    } else {
-                        WarmRouteLabel(route: status.route, online: status.online).padding(.trailing, 10)
+                    } label: {
+                        Image(systemName: "ellipsis").font(.system(size: 20)).foregroundStyle(Warm.accent).frame(width: 44, height: 44)
                     }
+                    .accessibilityLabel("更多操作")
                 }
                 WarmSegmentedControl(selection: $segment, items: [
                     .init(tab: .dial, title: "拨号"),
@@ -911,7 +940,7 @@ struct WarmCallsView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .background(Warm.background.ignoresSafeArea())
+            .background(Warm.plain.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
             .toolbar(.hidden, for: .tabBar)
             .modifier(WarmTabBarSpace(height: tabBarHeight))
@@ -976,13 +1005,13 @@ struct WarmSegmentedControl: View {
                 Text(item.title).font(.subheadline.weight(selected ? .semibold : .medium)).lineLimit(1)
                 if item.count > 0 {
                     Text(item.count > 9 ? "9+" : "\(item.count)")
-                        .font(.caption.weight(.semibold)).monospacedDigit().foregroundStyle(Warm.accent)
+                        .font(.caption.weight(.semibold)).monospacedDigit().foregroundStyle(Warm.danger)
                 }
             }
             .foregroundStyle(selected ? Warm.text : Warm.secondary)
             .padding(.horizontal, typeSize >= .xxxLarge ? 14 : 0)
-            .frame(maxWidth: typeSize >= .xxxLarge ? nil : .infinity, minHeight: typeSize >= .xxxLarge ? 44 : 38)
-            .background(selected ? Warm.surface : Color.clear, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .frame(maxWidth: typeSize >= .xxxLarge ? nil : .infinity, minHeight: typeSize >= .xxxLarge ? 44 : 32)
+            .background(selected ? Warm.raised : Color.clear, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1055,10 +1084,10 @@ struct WarmKeypad: View {
                         Color.clear.frame(maxWidth: .infinity, minHeight: 64)
                         Button { Task { await model.dial() } } label: {
                             Circle()
-                                .fill(canCall ? Warm.accent : Warm.disabledFill)
-                                .frame(width: 64, height: 64)
-                                .overlay(Image(systemName: "phone.fill").font(.system(size: 27))
-                                    .foregroundStyle(canCall ? Warm.onAccent : Warm.disabled))
+                                .fill(canCall ? Warm.call : Warm.disabledFill)
+                                .frame(width: 68, height: 68)
+                                .overlay(Image(systemName: "phone.fill").font(.system(size: 28))
+                                    .foregroundStyle(canCall ? Color.white : Warm.disabled))
                         }
                         .buttonStyle(.plain)
                         .disabled(!canCall)
@@ -1078,10 +1107,12 @@ struct WarmKeypad: View {
     }
 
     private var numberDisplay: some View {
-        Text(model.numberInput.isEmpty ? "输入号码" : model.numberInput)
+        // Empty until the first digit, like the system keypad; the line row below says where it dials from.
+        Text(model.numberInput.isEmpty ? " " : model.numberInput)
             .font(.largeTitle.weight(.regular))
             .monospacedDigit()
-            .foregroundStyle(model.numberInput.isEmpty ? Warm.disabled : Warm.text)
+            .foregroundStyle(Warm.text)
+            .accessibilityLabel(model.numberInput.isEmpty ? "号码，未输入" : model.numberInput)
             .lineLimit(1)
             .truncationMode(.head)
             .padding(.horizontal, 24)
@@ -1100,7 +1131,7 @@ struct WarmKeypad: View {
         Button { actions.pickLine(.dial) } label: {
             HStack(spacing: 6) {
                 Text(line.map { "从 \($0.title) 拨出" } ?? "选择拨号线路")
-                    .font(.subheadline).monospacedDigit().foregroundStyle(Warm.text).lineLimit(1).minimumScaleFactor(0.85)
+                    .font(.subheadline).monospacedDigit().foregroundStyle(Warm.secondary).lineLimit(1).minimumScaleFactor(0.85)
                 Image(systemName: model.warmInCall ? "lock" : "chevron.down")
                     .font(.system(size: 12, weight: .semibold)).foregroundStyle(Warm.secondary)
             }
@@ -1189,14 +1220,17 @@ struct WarmRecentsList: View {
         let sections = Dictionary(grouping: records) { Calendar.current.startOfDay(for: $0.startedAt) }
             .sorted { $0.key > $1.key }
         let missedCount = model.callHistory.filter { $0.direction == "incoming" && $0.missed }.count
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 20) {
-                    filter("全部", selected: !missedOnly) { missedOnly = false }
-                    filter(missedCount > 0 ? "未接 \(missedCount)" : "未接", selected: missedOnly) { missedOnly = true }
-                    Spacer()
-                }
-                if records.isEmpty {
+        // A plain List (not a ScrollView) so rows get the system swipe-to-delete.
+        List {
+            HStack(spacing: 18) {
+                filter("全部", selected: !missedOnly) { missedOnly = false }
+                filter(missedCount > 0 ? "未接 \(missedCount)" : "未接", selected: missedOnly) { missedOnly = true }
+                Spacer()
+            }
+            .padding(.top, 2)
+            .warmListRow()
+            if records.isEmpty {
+                Group {
                     if missedOnly {
                         WarmEmptyState(systemImage: "phone", title: "没有未接来电")
                     } else {
@@ -1204,18 +1238,25 @@ struct WarmRecentsList: View {
                                        actionTitle: "去拨号") { actions.openTab(.dial) }
                     }
                 }
-                ForEach(sections, id: \.key) { day, calls in
-                    WarmSectionTitle(title: WarmDate.day(day)).padding(.top, 8)
-                    let sorted = calls.sorted { $0.startedAt > $1.startedAt }
-                    ForEach(Array(sorted.enumerated()), id: \.element.id) { index, call in
-                        WarmRecentRow(call: call, hasVoicemail: hasVoicemail(call)) { detail = call }
-                        if index < sorted.count - 1 { WarmHairline().padding(.leading, 30) }
-                    }
+                .warmListRow()
+            }
+            ForEach(sections, id: \.key) { day, calls in
+                WarmSectionTitle(title: WarmDate.day(day)).padding(.top, 8).warmListRow()
+                let sorted = calls.sorted { $0.startedAt > $1.startedAt }
+                ForEach(Array(sorted.enumerated()), id: \.element.id) { index, call in
+                    WarmRecentRow(call: call, hasVoicemail: hasVoicemail(call)) { detail = call }
+                        .warmListRow(separator: index < sorted.count - 1)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) { model.deleteCallHistory(ids: [call.id]) } label: {
+                                Label("删除", systemImage: "trash")
+                            }
+                            .tint(Warm.danger)
+                        }
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 16)
+            Color.clear.frame(height: 16).warmListRow()
         }
+        .warmPlainList()
         .refreshable { await model.refreshCallHistory() }
         // Missed calls count as seen while this list is on screen — including records that
         // arrive after it appeared (cloud lines sync a few seconds later) or while the app was
@@ -1237,8 +1278,8 @@ struct WarmRecentsList: View {
     private func filter(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title).font(.subheadline.weight(selected ? .semibold : .regular))
-                .foregroundStyle(selected ? Warm.accent : Warm.secondary)
-                .frame(minHeight: 44)
+                .foregroundStyle(selected ? Warm.text : Warm.secondary)
+                .frame(minHeight: 40)
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? [.isSelected, .isButton] : .isButton)
@@ -1262,41 +1303,34 @@ private struct WarmRecentRow: View {
     private var incoming: Bool { call.direction == "incoming" }
 
     var body: some View {
+        // Two lines: who (red when missed, like the system Phone app), then what happened and on which line.
+        let tag = model.warmLineTag(agentID: call.sourceAgentID, slot: call.slotIndex.map { "SIM \($0 + 1)" })
+        let what = call.missed
+            ? (hasVoicemail ? "未接 · 有留言" : "未接")
+            : (incoming ? "呼入" : "呼出") + (call.connectedDuration.map { " " + WarmDate.duration($0) } ?? "")
         Button(action: open) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: call.missed ? "phone.down" : incoming ? "phone.arrow.down.left" : "phone.arrow.up.right")
-                    .font(.system(size: 16))
-                    .foregroundStyle(call.missed ? Warm.danger : Warm.secondary)
-                    .frame(width: 18)
-                    .padding(.top, 3)
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(WarmPhone.name(call.number, contacts: contacts))
-                            .font(.body).monospacedDigit().foregroundStyle(Warm.text)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Spacer(minLength: 8)
-                        // Rows sit under a day heading, so they carry only the time.
-                        Text(call.startedAt.formatted(date: .omitted, time: .shortened)).font(.caption).monospacedDigit().foregroundStyle(Warm.secondary)
-                    }
-                    Text((incoming ? "打到 " : "经由 ") + model.warmSourceLabel(agentID: call.sourceAgentID, slot: call.slotIndex.map { "SIM \($0 + 1)" }))
-                        .font(.subheadline).monospacedDigit().foregroundStyle(Warm.secondary)
-                    HStack(spacing: 0) {
-                        if call.missed {
-                            Text("未接").foregroundStyle(Warm.danger)
-                            if hasVoicemail { Text(" · 有语音留言").foregroundStyle(Warm.secondary) }
-                        } else {
-                            Text(incoming ? "呼入" : "呼出")
-                            Text(call.connectedDuration.map { " · " + WarmDate.duration($0) } ?? "")
-                        }
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(WarmPhone.name(call.number, contacts: contacts))
+                        .font(.body.weight(.medium)).monospacedDigit()
+                        .foregroundStyle(call.missed ? Warm.danger : Warm.text)
+                        .lineLimit(1)
+                    HStack(spacing: 5) {
+                        Image(systemName: incoming ? "phone.arrow.down.left" : "phone.arrow.up.right")
+                            .font(.system(size: 11, weight: .medium))
+                        Text([what, tag].compactMap { $0 }.joined(separator: " · ")).monospacedDigit()
                     }
                     .font(.subheadline)
                     .foregroundStyle(Warm.secondary)
+                    .lineLimit(1)
                 }
-                Image(systemName: "info.circle").font(.system(size: 20)).foregroundStyle(Warm.accent)
-                    .frame(width: 44, height: 44)
-                    .accessibilityHidden(true)
+                Spacer(minLength: 8)
+                // Rows sit under a day heading, so they carry only the time.
+                Text(call.startedAt.formatted(date: .omitted, time: .shortened))
+                    .font(.subheadline).monospacedDigit().foregroundStyle(Warm.secondary)
             }
-            .padding(.vertical, 10)
+            .padding(.vertical, 9)
+            .frame(minHeight: 58)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1331,6 +1365,23 @@ private struct WarmCallDetail: View {
                         Text(WarmPhone.format(number)).font(.body).monospacedDigit().foregroundStyle(Warm.secondary).padding(.top, 4)
                             .textSelection(.enabled)
                     }
+                    if let number = RecentCallDialPolicy.numberToDial(call.number) {
+                        HStack(spacing: 8) {
+                            WarmActionTile(systemImage: "phone.fill", title: "回拨") {
+                                dismiss()
+                                model.warmDial(number, on: line?.online == true ? line : nil)
+                            }
+                            .disabled(model.warmInCall)
+                            WarmActionTile(systemImage: "message.fill", title: "短信") { dismiss(); actions.message(number) }
+                            if hasVoicemail {
+                                WarmActionTile(systemImage: "recordingtape", title: "留言", action: playVoicemail)
+                            }
+                        }
+                        .padding(.top, 20)
+                    }
+                    if model.warmInCall {
+                        WarmNotice(text: "通话中，暂不能再次拨号。").padding(.top, 12)
+                    }
                     VStack(spacing: 0) {
                         fact("时间", WarmDate.full(call.startedAt))
                         WarmHairline()
@@ -1347,36 +1398,7 @@ private struct WarmCallDetail: View {
                             fact("时长", WarmDate.duration(duration))
                         }
                     }
-                    .padding(.top, 20)
-                    if model.warmInCall {
-                        WarmNotice(text: "通话中，暂不能再次拨号。").padding(.top, 16)
-                    }
-                    if let number = RecentCallDialPolicy.numberToDial(call.number) {
-                        HStack(spacing: 12) {
-                            Button {
-                                dismiss()
-                                model.warmDial(number, on: line?.online == true ? line : nil)
-                            } label: { Label("回拨", systemImage: "phone") }
-                                .buttonStyle(WarmPrimaryButtonStyle())
-                                .disabled(model.warmInCall)
-                            Button { dismiss(); actions.message(number) } label: { Label("发短信", systemImage: "message") }
-                                .buttonStyle(WarmSecondaryButtonStyle())
-                        }
-                        .padding(.top, 20)
-                    }
-                    if hasVoicemail {
-                        Button(action: playVoicemail) {
-                            HStack {
-                                Text("播放语音留言").font(.body).foregroundStyle(Warm.accent)
-                                Spacer()
-                                Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(Warm.disabled)
-                            }
-                            .frame(minHeight: 44)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.top, 12)
-                    }
+                    .padding(.top, 16)
                 }
                 .padding(20)
             }
@@ -1506,21 +1528,27 @@ private struct WarmContactDetail: View {
             if let contact = contacts.contacts.first(where: { $0.id == contactID }) {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(contact.name).font(.title.weight(.bold)).foregroundStyle(Warm.text).padding(.top, 24)
-                    Text(contact.phones.isEmpty ? "这个联系人没有电话号码" : "\(contact.phones.count) 个号码")
-                        .font(.subheadline).foregroundStyle(Warm.secondary).padding(.top, 4)
-                    ForEach(Array(contact.phones.enumerated()), id: \.offset) { index, number in
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(contact.phones.count > 1 ? "号码 \(index + 1)" : "电话").font(.caption).foregroundStyle(Warm.secondary)
-                            Text(WarmPhone.format(number)).font(.body).monospacedDigit().foregroundStyle(Warm.text).textSelection(.enabled)
-                            HStack(spacing: 12) {
-                                Button { dial(number) } label: { Text("拨打") }.buttonStyle(WarmPrimaryButtonStyle())
-                                    .disabled(model.warmInCall)
-                                Button { actions.message(number) } label: { Text("发短信") }.buttonStyle(WarmSecondaryButtonStyle())
-                            }
-                        }
-                        .padding(.top, 24)
+                    if contact.phones.isEmpty {
+                        Text("这个联系人没有电话号码").font(.subheadline).foregroundStyle(Warm.secondary).padding(.top, 4)
                     }
-                    WarmHairline().padding(.top, 24)
+                    VStack(spacing: 0) {
+                        ForEach(Array(contact.phones.enumerated()), id: \.offset) { index, number in
+                            HStack(spacing: 12) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(contact.phones.count > 1 ? "号码 \(index + 1)" : "电话").font(.caption).foregroundStyle(Warm.secondary)
+                                    Text(WarmPhone.format(number)).font(.body).monospacedDigit().foregroundStyle(Warm.text).textSelection(.enabled)
+                                }
+                                Spacer(minLength: 8)
+                                roundAction("message.fill", "给 \(WarmPhone.format(number)) 发短信") { actions.message(number) }
+                                roundAction("phone.fill", "拨打 \(WarmPhone.format(number))") { dial(number) }
+                                    .disabled(model.warmInCall)
+                            }
+                            .frame(minHeight: 64)
+                            if index < contact.phones.count - 1 { WarmHairline() }
+                        }
+                    }
+                    .padding(.top, 16)
+                    WarmHairline().padding(.top, 8)
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("默认线路").font(.caption).foregroundStyle(Warm.secondary)
@@ -1537,11 +1565,24 @@ private struct WarmContactDetail: View {
                 WarmEmptyState(systemImage: "person.crop.circle.badge.questionmark", title: "联系人不可用")
             }
         }
-        .background(Warm.background.ignoresSafeArea())
+        .background(Warm.plain.ignoresSafeArea())
         .navigationTitle("联系人详情")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .tint(Warm.accent)
+    }
+
+    private func roundAction(_ systemImage: String, _ label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage).font(.system(size: 16))
+                .foregroundStyle(Warm.accent)
+                .frame(width: 40, height: 40)
+                .background(Warm.muted, in: Circle())
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
 }
 
@@ -1557,9 +1598,9 @@ struct WarmVoicemailList: View {
         let voicemails = model.warmVoicemails
         let hasVoipms = model.pairedAndroidAgents.contains { $0.isVoipms }
         let sections = Dictionary(grouping: voicemails) { Calendar.current.startOfDay(for: $0.timestamp) }.sorted { $0.key > $1.key }
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                if voicemails.isEmpty {
+        List {
+            if voicemails.isEmpty {
+                Group {
                     if hasVoipms {
                         WarmEmptyState(systemImage: "recordingtape", title: "暂无语音留言", detail: "收到的语音留言会显示在这里。")
                     } else {
@@ -1567,19 +1608,27 @@ struct WarmVoicemailList: View {
                                        actionTitle: "添加设备") { actions.openSettings([.add]) }
                     }
                 }
-                ForEach(sections, id: \.key) { day, items in
-                    WarmSectionTitle(title: WarmDate.day(day)).padding(.top, 8)
-                    ForEach(Array(items.enumerated()), id: \.element.id) { index, message in
-                        WarmVoicemailRow(message: message, expanded: expanded == message.id, tick: tick, actions: actions) {
-                            expanded = message.id
-                        }
-                        if index < items.count - 1 { WarmHairline() }
+                .warmListRow()
+            }
+            ForEach(sections, id: \.key) { day, items in
+                WarmSectionTitle(title: WarmDate.day(day)).padding(.top, 8).warmListRow()
+                ForEach(Array(items.enumerated()), id: \.element.id) { index, message in
+                    WarmVoicemailRow(message: message, expanded: expanded == message.id, tick: tick, actions: actions) {
+                        expanded = message.id
+                    }
+                    .warmListRow(separator: index < items.count - 1)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button(role: .destructive) {
+                            if SMSAudioPlayback.shared.isPlaying(message.id) { SMSAudioPlayback.shared.stop() }
+                            model.deleteMessages(ids: [message.id])
+                        } label: { Label("删除", systemImage: "trash") }
+                        .tint(Warm.danger)
                     }
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 16)
+            Color.clear.frame(height: 16).warmListRow()
         }
+        .warmPlainList()
         .onReceive(NotificationCenter.default.publisher(for: SMSAudioPlayback.didChange)) { _ in tick &+= 1 }
     }
 }
@@ -1603,67 +1652,70 @@ private struct WarmVoicemailRow: View {
     }
 
     var body: some View {
+        let tag = model.warmLineTag(agentID: message.sourceAgentID, slot: message.simSlot)
+        let meta = [audio?.duration.map { WarmDate.clock($0) }, tag].compactMap { $0 }.joined(separator: " · ")
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Circle().fill(heard ? Color.clear : Warm.accent).frame(width: 8, height: 8).accessibilityHidden(true)
-                Text(WarmPhone.name(message.sender, contacts: contacts))
-                    .font(heard ? .body : .body.weight(.semibold)).monospacedDigit().foregroundStyle(Warm.text)
-                    .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .center, spacing: 10) {
+                Circle().fill(heard ? Color.clear : Warm.accent).frame(width: 8, height: 8)
+                    .accessibilityLabel(heard ? "" : "未听")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(WarmPhone.name(message.sender, contacts: contacts))
+                        .font(heard ? .body : .body.weight(.semibold)).monospacedDigit().foregroundStyle(Warm.text)
+                        .lineLimit(1)
+                    if !meta.isEmpty {
+                        Text(meta).font(.subheadline).monospacedDigit().foregroundStyle(Warm.secondary).lineLimit(1)
+                    }
+                }
                 Spacer(minLength: 8)
-                Text(message.timestamp.formatted(date: .omitted, time: .shortened)).font(.caption).monospacedDigit().foregroundStyle(Warm.secondary)
-            }
-            Text("打到 " + model.warmSourceLabel(agentID: message.sourceAgentID, slot: message.simSlot))
-                .font(.subheadline).monospacedDigit().foregroundStyle(Warm.secondary)
-                .padding(.leading, 16).padding(.top, 3)
-            HStack(spacing: 10) {
+                Text(message.timestamp.formatted(date: .omitted, time: .shortened))
+                    .font(.subheadline).monospacedDigit().foregroundStyle(Warm.secondary)
                 Button(action: toggle) {
-                    Circle().fill(Warm.accentSoft).frame(width: 44, height: 44)
-                        .overlay {
-                            if loading {
-                                ProgressView().tint(Warm.accent)
-                            } else {
-                                Image(systemName: playing ? "pause.fill" : "play.fill").font(.system(size: 17))
-                                    .foregroundStyle(Warm.accent).offset(x: playing ? 0 : 1)
-                            }
+                    Group {
+                        if loading {
+                            ProgressView().tint(Warm.accent)
+                        } else {
+                            Image(systemName: playing ? "pause.fill" : "play.fill").font(.system(size: 17))
+                                .foregroundStyle(Warm.accent)
                         }
+                    }
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(playing ? "暂停语音留言" : "播放语音留言")
-                if expanded {
-                    VStack(spacing: 4) {
-                        ProgressView(value: playing ? SMSAudioPlayback.shared.progress : 0).tint(Warm.accent)
-                        HStack {
-                            Text(WarmDate.clock(playing ? SMSAudioPlayback.shared.currentTime : 0))
-                            Spacer()
-                            Text(WarmDate.clock(audio?.duration ?? SMSAudioPlayback.shared.duration))
-                        }
-                        .font(.caption).monospacedDigit().foregroundStyle(Warm.secondary)
-                    }
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("进度 \(WarmDate.clock(playing ? SMSAudioPlayback.shared.currentTime : 0))，共 \(WarmDate.clock(audio?.duration ?? 0))")
-                } else {
-                    Text((heard ? "已听" : "未听") + (audio?.duration.map { " · " + WarmDate.clock($0) } ?? ""))
-                        .font(.subheadline).monospacedDigit().foregroundStyle(Warm.secondary)
-                    Spacer()
-                }
             }
-            .padding(.leading, 16).padding(.top, 8)
-            if expanded, let number = RecentCallDialPolicy.numberToDial(message.sender) {
-                HStack {
-                    Button { model.warmDial(number, on: model.warmLine(agentID: message.sourceAgentID, slotIndex: slotIndex)) } label: {
-                        Label("回拨", systemImage: "phone")
+            if expanded {
+                VStack(spacing: 4) {
+                    ProgressView(value: playing ? SMSAudioPlayback.shared.progress : 0).tint(Warm.accent)
+                    HStack {
+                        Text(WarmDate.clock(playing ? SMSAudioPlayback.shared.currentTime : 0))
+                        Spacer()
+                        Text(WarmDate.clock(audio?.duration ?? SMSAudioPlayback.shared.duration))
                     }
-                    .disabled(model.warmInCall)
-                    Spacer()
-                    Button { actions.message(number) } label: { Label("发短信", systemImage: "message") }
+                    .font(.caption).monospacedDigit().foregroundStyle(Warm.secondary)
                 }
-                .font(.callout.weight(.semibold))
-                .foregroundStyle(Warm.accent)
-                .frame(minHeight: 44)
-                .padding(.leading, 16).padding(.top, 4)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("进度 \(WarmDate.clock(playing ? SMSAudioPlayback.shared.currentTime : 0))，共 \(WarmDate.clock(audio?.duration ?? 0))")
+                .padding(.leading, 18).padding(.trailing, 4).padding(.top, 6)
+                if let number = RecentCallDialPolicy.numberToDial(message.sender) {
+                    HStack(spacing: 24) {
+                        Button { model.warmDial(number, on: model.warmLine(agentID: message.sourceAgentID, slotIndex: slotIndex)) } label: {
+                            Label("回拨", systemImage: "phone")
+                        }
+                        .disabled(model.warmInCall)
+                        Button { actions.message(number) } label: { Label("发短信", systemImage: "message") }
+                        Spacer()
+                    }
+                    // Inside a List row, default-style buttons would all fire on any tap.
+                    .buttonStyle(.borderless)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(Warm.accent)
+                    .frame(minHeight: 44)
+                    .padding(.leading, 18)
+                }
             }
         }
-        .padding(.vertical, 12)
+        .padding(.vertical, 8)
         .contentShape(Rectangle())
         .onTapGesture { if !expanded { expand() } }
         .contextMenu {
@@ -1718,38 +1770,60 @@ struct WarmMessagesView: View {
 
     var body: some View {
         let list = conversations
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
+        List {
+            Group {
                 WarmPageHeader(title: "短信") {
                     Menu {
-                        Button("清空全部短信", role: .destructive) { confirmingClear = true }.disabled(model.messages.isEmpty)
+                        Button { model.markMessagesRead(model.messages) } label: { Label("全部标为已读", systemImage: "checkmark.circle") }
+                            .disabled(model.unreadMessageIDs.isEmpty)
+                        Button(role: .destructive) { confirmingClear = true } label: { Label("清空全部短信", systemImage: "trash") }
+                            .disabled(model.messages.isEmpty)
                     } label: {
                         Image(systemName: "ellipsis").font(.system(size: 20)).foregroundStyle(Warm.accent).frame(width: 44, height: 44)
                     }
                     .accessibilityLabel("更多操作")
                     WarmIconButton(systemName: "square.and.pencil", label: "新建短信") { showingComposer = true }
                 }
+                .warmListRow(leading: 0, trailing: 0)
                 WarmSearchField(prompt: "搜索姓名、号码或内容", text: $search)
-                    .padding(.horizontal, 20)
                     .padding(.bottom, 4)
+                    .warmListRow()
                 if list.isEmpty {
-                    if search.isEmpty {
-                        WarmEmptyState(systemImage: "message", title: "暂无短信", detail: "收到或发出的短信会显示在这里。",
-                                       actionTitle: "新建短信") { showingComposer = true }
-                    } else {
-                        WarmEmptyState(systemImage: "magnifyingglass", title: "未找到短信", detail: "试试姓名、号码或其他关键词。")
+                    Group {
+                        if search.isEmpty {
+                            WarmEmptyState(systemImage: "message", title: "暂无短信", detail: "收到或发出的短信会显示在这里。",
+                                           actionTitle: "新建短信") { showingComposer = true }
+                        } else {
+                            WarmEmptyState(systemImage: "magnifyingglass", title: "未找到短信", detail: "试试姓名、号码或其他关键词。")
+                        }
                     }
-                }
-                ForEach(Array(list.enumerated()), id: \.element.sender) { index, conversation in
-                    WarmConversationRow(sender: conversation.sender, messages: conversation.messages) { open(conversation.sender) }
-                        .padding(.horizontal, 20)
-                    if index < list.count - 1 { WarmHairline().padding(.leading, 92) }
+                    .warmListRow()
                 }
             }
-            .padding(.bottom, 16)
+            ForEach(Array(list.enumerated()), id: \.element.sender) { index, conversation in
+                let unread = conversation.messages.contains { model.unreadMessageIDs.contains($0.id) }
+                // The unread dot sits in the left margin, so the avatar lines up with the title.
+                WarmConversationRow(sender: conversation.sender, messages: conversation.messages) { open(conversation.sender) }
+                    .warmListRow(leading: 4, trailing: 20, separator: index < list.count - 1)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button(role: .destructive) {
+                            SMSAudioPlayback.shared.stop()
+                            model.deleteMessages(ids: Set(conversation.messages.map(\.id)))
+                        } label: { Label("删除", systemImage: "trash") }
+                        .tint(Warm.danger)
+                        if unread {
+                            Button { model.markMessagesRead(conversation.messages) } label: {
+                                Label("已读", systemImage: "envelope.open")
+                            }
+                            .tint(Color(uiColor: .systemGray))
+                        }
+                    }
+            }
+            Color.clear.frame(height: 16).warmListRow()
         }
+        .warmPlainList()
         .refreshable { await model.loadMessagesFromAgent() }
-        .background(Warm.background.ignoresSafeArea())
+        .background(Warm.plain.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
         .task {
             await contacts.loadIfAuthorized()
@@ -1812,12 +1886,14 @@ struct WarmSMSAvatar: View {
                 Image(brand.rawValue).resizable().scaledToFit().padding(size * 0.17)
                     .frame(width: size, height: size).background(Color.white)
             } else if let initial = name?.trimmingCharacters(in: .whitespacesAndNewlines).first {
-                Warm.accentSoft.overlay {
-                    Text(String(initial)).font(.system(size: size * 0.42, weight: .semibold)).foregroundStyle(Warm.accent)
+                // Neutral like the system's monogram avatars; the accent is kept for state, not decoration.
+                Warm.avatar.overlay {
+                    Text(String(initial).uppercased()).font(.system(size: size * 0.42, weight: .medium)).foregroundStyle(.white)
                 }
             } else {
-                Warm.muted.overlay {
-                    Image(systemName: "person.fill").font(.system(size: size * 0.42)).foregroundStyle(Warm.secondary)
+                Warm.avatar.overlay {
+                    Image(systemName: "person.fill").font(.system(size: size * 0.46)).foregroundStyle(.white)
+                        .offset(y: size * 0.06)
                 }
             }
         }
@@ -1841,27 +1917,33 @@ private struct WarmConversationRow: View {
         let contact = contacts.contact(for: sender)
         let brand = contact == nil ? SMSCarrierBrand.match(sender) : nil
         let name = contact?.name ?? WarmPhone.format(sender)
+        let tag = latest.flatMap { model.warmLineTag(agentID: $0.sourceAgentID, slot: $0.simSlot) }
         Button(action: open) {
-            HStack(alignment: .center, spacing: 8) {
+            HStack(alignment: .top, spacing: 0) {
                 Circle().fill(unread ? Warm.accent : Color.clear).frame(width: 8, height: 8)
+                    .frame(width: 16, height: 44)
                 WarmSMSAvatar(name: contact?.name, photoData: contact?.photoData, brand: brand)
-                    .padding(.trailing, 4)
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(name).font(unread ? .body.weight(.semibold) : .body).monospacedDigit().foregroundStyle(Warm.text).lineLimit(1)
+                    .padding(.trailing, 12)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(name).font(unread ? .body.weight(.semibold) : .body.weight(.medium)).monospacedDigit()
+                            .foregroundStyle(Warm.text).lineLimit(1).layoutPriority(1)
+                        if let tag {
+                            Text(tag).font(.caption).monospacedDigit().foregroundStyle(Warm.secondary).lineLimit(1)
+                        }
                         Spacer(minLength: 8)
                         if let latest {
-                            Text(WarmDate.list(latest.timestamp)).font(.caption).monospacedDigit().foregroundStyle(Warm.secondary)
+                            Text(WarmDate.list(latest.timestamp)).font(.subheadline).monospacedDigit().foregroundStyle(Warm.secondary)
                         }
                     }
-                    Text(preview(latest)).font(.subheadline).foregroundStyle(Warm.text.opacity(unread ? 1 : 0.85))
+                    Text(preview(latest)).font(.subheadline).foregroundStyle(Warm.secondary)
                         .lineLimit(2).multilineTextAlignment(.leading)
-                    if let latest {
-                        Text(source(latest)).font(.caption).monospacedDigit().foregroundStyle(Warm.secondary).lineLimit(1)
-                    }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                // List separators start under the text, not under the avatar.
+                .alignmentGuide(.listRowSeparatorLeading) { $0[.leading] }
             }
-            .padding(.vertical, 12)
+            .padding(.vertical, 10)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1875,7 +1957,7 @@ private struct WarmConversationRow: View {
         guard let message else { return "" }
         var body = message.content
         if let audio = message.attachments?.first(where: { $0.kind == .audio }) {
-            body = "[语音留言]" + (audio.duration.map { " · " + WarmDate.clock($0) } ?? "")
+            body = "[语音留言]" + (audio.duration.map { " " + WarmDate.clock($0) } ?? "")
         }
         return message.isOutgoing ? "我：" + body : body
     }
@@ -1888,6 +1970,7 @@ private struct WarmConversationRow: View {
 
 // MARK: - Account (P11)
 
+/// Settings-style groups without decoration: no icons, no stats line, no section captions.
 struct WarmAccountView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var settings: AppSettings
@@ -1897,69 +1980,58 @@ struct WarmAccountView: View {
         let agents = model.pairedAndroidAgents
         let current = model.warmCurrentLine
         let agent = model.currentAndroidAgent
+        let online = agents.filter(\.isReachable).count
         ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                WarmPageHeader(title: "我的") { EmptyView() }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("AirSIM").font(.headline).foregroundStyle(Warm.text)
-                    Text("\(model.warmLines.count) 条线路 · \(agents.count) 台设备").font(.subheadline).foregroundStyle(Warm.secondary)
+            VStack(alignment: .leading, spacing: 24) {
+                WarmPageHeader(title: "我的") { EmptyView() }.padding(.bottom, -16)
+                group {
+                    row("默认线路", current?.title) { actions.pickLine(.defaultLine) }
+                    divider
+                    row("连接与设备", agents.isEmpty ? "未添加" : "\(online)/\(agents.count) 在线") { actions.openSettings([.connections]) }
+                    divider
+                    row("来电与短信", nil) { actions.openSettings([.calls]) }
+                    divider
+                    row("外观与偏好", settings.theme.title) { actions.openSettings([.preferences]) }
                 }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 8)
-                group("通用") {
-                    row("simcard", "默认线路", current?.title) { actions.pickLine(.defaultLine) }
+                group {
+                    row("连接状态", model.warmInCall ? "通话中" : (agent?.routeTitle ?? "无设备")) { actions.openSettings([.status]) }
                     divider
-                    row("antenna.radiowaves.left.and.right", "连接与设备", nil) { actions.openSettings([.connections]) }
+                    row("网络诊断", nil) { actions.openSettings([.help, .networkDiagnostics]) }
                     divider
-                    row("phone.bubble", "来电与短信", nil) { actions.openSettings([.calls]) }
+                    row("帮助与诊断", nil) { actions.openSettings([.help]) }
                     divider
-                    row("circle.lefthalf.filled", "外观与偏好", settings.theme.title) { actions.openSettings([.preferences]) }
-                    divider
-                    row("dot.radiowaves.left.and.right", "连接状态", model.warmInCall ? "通话中" : (agent?.routeTitle ?? "无设备")) {
-                        actions.openSettings([.status])
-                    }
+                    row("意见反馈", nil) { actions.openSettings([.feedback]) }
                 }
-                group("支持") {
-                    row("network", "网络诊断", nil) { actions.openSettings([.help, .networkDiagnostics]) }
+                group {
+                    row("关于 AirSIM", AppInformation.version) { actions.openSettings([.about]) }
                     divider
-                    row("stethoscope", "帮助与诊断", nil) { actions.openSettings([.help]) }
-                    divider
-                    row("bubble.left.and.text.bubble.right", "意见反馈", nil) { actions.openSettings([.feedback]) }
-                    divider
-                    row("info.circle", "关于 AirSIM", nil) { actions.openSettings([.about]) }
-                    divider
-                    row("gearshape", "全部设置", nil) { actions.openSettings([]) }
+                    row("全部设置", nil) { actions.openSettings([]) }
                 }
             }
-            .padding(.bottom, 8)
+            .padding(.bottom, 16)
         }
         .background(Warm.background.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
     }
 
-    private var divider: some View { WarmHairline().padding(.leading, 52) }
+    private var divider: some View { WarmHairline().padding(.leading, 16) }
 
-    private func group<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            WarmSectionTitle(title: title).padding(.horizontal, 20)
-            VStack(spacing: 0, content: content).warmCard().padding(.horizontal, 20)
-        }
-        .padding(.top, 8)
+    private func group<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        VStack(spacing: 0, content: content).warmCard().padding(.horizontal, 16)
     }
 
-    private func row(_ icon: String, _ title: String, _ value: String?, action: @escaping () -> Void) -> some View {
+    private func row(_ title: String, _ value: String?, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 12) {
-                Image(systemName: icon).font(.system(size: 18)).foregroundStyle(Warm.secondary).frame(width: 24)
                 Text(title).font(.body).foregroundStyle(Warm.text)
                 Spacer(minLength: 8)
                 if let value {
-                    Text(value).font(.subheadline).monospacedDigit().foregroundStyle(Warm.secondary).lineLimit(1)
+                    Text(value).font(.body).monospacedDigit().foregroundStyle(Warm.secondary).lineLimit(1)
                 }
-                Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(Warm.disabled)
+                Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Warm.disabled)
             }
             .padding(.horizontal, 16)
-            .frame(minHeight: 52)
+            .frame(minHeight: 48)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

@@ -403,7 +403,8 @@ struct MessageThreadView: View {
             )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(PhoneBackdrop())
+        // One plain page under the navigation bar, timeline and reply bar (no gray band at the top).
+        .background(Color(uiColor: SMSThemeColors.background).ignoresSafeArea())
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if selection.isSelecting { selectionBar } else { replyBar }
         }
@@ -624,7 +625,7 @@ struct MessageComposer: View {
                 Divider()
                 messageInputBar
             }
-            .background(PhoneBackdrop())
+            .background(Color(uiColor: SMSThemeColors.background).ignoresSafeArea())
             .navigationTitle(L10n.t("新信息"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

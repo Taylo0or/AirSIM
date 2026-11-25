@@ -12,7 +12,7 @@
 | iOS | 包名 `com.taylent.airsim`，中转 `https://airsim.taylent.com`，去掉需审批的默认通话/短信 entitlement 和 App Group |
 | Relay | 短信事件可带 `attachments`（≤3 个 https 附件：彩信图片 / 语音留言），`send_sms` 可带 `media_ids`（有图时正文可空） |
 | iOS | voip.ms 线路（agent_kind `voipms`，桥接在 `~/airsim-voipms`）：气泡内显示彩信图片（QuickLook 预览）和语音留言播放；会话输入栏可选图发彩信，图片先上传到 `<relay>/voipms/media` |
-| iOS | 界面换成新外壳（首页 / 通话 / 短信 / 我的，`WarmShellViews.swift`），设计稿由 Codex 出（`docs/design/warm-2026-11-20/`）；原上游五标签界面已删除。主题（暖橙 / 墨绿 / 天蓝）只切换这套界面的强调色 |
+| iOS | 界面换成新外壳（首页 / 通话 / 短信 / 我的，`WarmShellViews.swift`），设计稿由 Codex 出（`docs/design/warm-2026-11-20/`），2026-11-25 视觉改为中性系统灰、首页改为线路表（`REVISION-2026-11-25.md`）；原上游五标签界面已删除。主题（暖橙 / 墨绿 / 天蓝）只切换这套界面的强调色 |
 | iOS | voip.ms 来电接听不再等本地路由（云端专用线路直接走 Relay 媒体） |
 | Android | 远端静默模式来电不亮屏（不再发全屏 intent / turnScreenOn）；通话期间的应用唤醒由 root/Shizuku 助手熄回（需 `dumpsys power` 有 `mLastWakeReason`，K40 的 Android 13 没有，按设计不动作）。移植自 2020cqyd 的 PR `codex/300-network-call-sms-followup` |
 | iOS | 短信会话行带头像（联系人照片 › 服务号图标 › 姓名首字 › 人形）。服务号图标与号码表自 v0.9.8.26 起用上游的 `SMSCarrierBrand` / `SMSServiceAssets`（来源见 `docs/SMSCarrierIcons.md`），本仓库只加了中文品牌名给 VoiceOver |

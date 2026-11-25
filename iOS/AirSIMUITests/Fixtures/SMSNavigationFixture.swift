@@ -44,6 +44,13 @@ struct SMSNavigationFixture {
             SMSSIMPreference.forget(agentID: agentID)
             SMSSIMPreference.remember(agentID: agentID, slots: slots)
         }
+        let withLines = ProcessInfo.processInfo.environment["AIRSIM_UI_LINES"] == "1"
+        if withLines, NSClassFromString("XCTestCase") == nil {
+            // Shell screenshots with a realistic roster: 家中 K40 (one SIM) + voip.ms (two DIDs), all online.
+            // The cloud status comes from `linesStatus` below; nothing reaches a Relay.
+            arguments[ConnectionModePreference.key] = AirSIMConnectionMode.cloud.rawValue
+            arguments[AndroidAgentBindingPreference.key] = "k40-fixture"
+        }
         UserDefaults.standard.setVolatileDomain(arguments, forName: UserDefaults.argumentDomain)
         let defaults = UserDefaults(suiteName: "AirSIM.UITest.\(UUID().uuidString)")!
         defaults.set(true, forKey: "airsim.first-connection-complete")
@@ -97,9 +104,13 @@ struct SMSNavigationFixture {
         }
         let contactCache = ContactCacheStore(fileURL: FileManager.default.temporaryDirectory
             .appendingPathComponent("AirSIM-UI-contacts-\(UUID().uuidString).json"))
-        let model = AppModel(contactStore: ContactStore(fetcher: NavigationContactFetcher(), cache: contactCache),
-                             historyStore: history)
+        let model = withLines
+            ? AppModel(contactStore: ContactStore(fetcher: NavigationContactFetcher(), cache: contactCache),
+                       historyStore: history, cloudStatusFetcher: { linesStatus })
+            : AppModel(contactStore: ContactStore(fetcher: NavigationContactFetcher(), cache: contactCache),
+                       historyStore: history)
         model.messages = history.loadMessages()
+        if withLines { Task { @MainActor in await model.refreshCloudStatusForDiagnostics() } }
         if ProcessInfo.processInfo.environment["AIRSIM_UI_RECENTS"] == "1" {
             let now = Date()
             var calls = [CallRecord(id: "recent-a", index: 0, direction: "incoming", state: "ended", number: "13800138000", startedAt: now, updatedAt: now, endedAt: now, missed: true),
@@ -128,11 +139,32 @@ struct SMSNavigationFixture {
     }
 }
 
+/// AIRSIM_UI_LINES roster. Numbers are fictional (555-01xx / masked mainland range).
+@MainActor private var linesStatus: CloudAgentStatus {
+    let now = Date().timeIntervalSince1970 * 1000
+    return try! JSONDecoder().decode(CloudAgentStatus.self, from: Data("""
+    {"cloud_online":true,"active_agent_id":"k40-fixture","agents":[
+     {"agent_id":"k40-fixture","device_name":"家中 K40","cloud_online":true,
+      "battery":{"percent":82,"charging":false,"observed_at_ms":\(now)},
+      "sim_slots":[{"id":"k40-1","label":"SIM 1","slot_index":0,"carrier_name":"中国电信","number":"+8613800000426",
+                    "default":true,"signal":{"level":3,"observed_at_ms":\(now)}}]},
+     {"agent_id":"voipms-fixture","agent_kind":"voipms","device_name":"voip.ms","cloud_online":true,
+      "sim_slots":[{"id":"voipms:2365550777","label":"voip.ms","number":"+12365550777","slot_index":0,"signal":{"level":4,"observed_at_ms":\(now)}},
+                   {"id":"voipms:6725550111","label":"voip.ms","number":"+16725550111","slot_index":1,"signal":{"level":4,"observed_at_ms":\(now)}}]}]}
+    """.utf8))
+}
+
 private struct NavigationContactFetcher: ContactFetching {
     func authorizationState() -> ContactAuthorizationState { .authorized }
     func requestAccess() async throws -> Bool { true }
     func fetchAll() throws -> [ContactStore.Contact] {
-        [.init(id: "navigation-contact", name: "Navigation Alice", phones: ["2025550100"], emails: [], photoData: nil)]
+        var all: [ContactStore.Contact] = [.init(id: "navigation-contact", name: "Navigation Alice", phones: ["2025550100"], emails: [], photoData: nil)]
+        if ProcessInfo.processInfo.environment["AIRSIM_UI_LINES"] == "1" {
+            all += [.init(id: "c-lin", name: "林青", phones: ["+17785550591"], emails: [], photoData: nil),
+                    .init(id: "c-zhou", name: "周宁", phones: ["+16045550142", "+8613800000188"], emails: [], photoData: nil),
+                    .init(id: "c-chen", name: "陈岚", phones: ["+14375550937"], emails: [], photoData: nil)]
+        }
+        return all
     }
 }
 #endif

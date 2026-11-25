@@ -85,14 +85,14 @@ enum AppTheme: String, CaseIterable, Identifiable {
 
     var uiAccent: UIColor {
         switch self {
-        case .warm: return Self.pair(0xB84912, 0xF5A16B)
+        case .warm: return Self.pair(0xC4500A, 0xFF9F43)
         case .forest: return Self.pair(0x1D6B53, 0x7CCBAE)
         case .sky: return Self.pair(0x1F65A6, 0x8CBFF0)
         }
     }
     var uiAccentSoft: UIColor {
         switch self {
-        case .warm: return Self.pair(0xF8E9DE, 0x35251B)
+        case .warm: return Self.pair(0xFCEEE4, 0x3A2817)
         case .forest: return Self.pair(0xE1EFE8, 0x1C2E27)
         case .sky: return Self.pair(0xE2ECF7, 0x1B2634)
         }

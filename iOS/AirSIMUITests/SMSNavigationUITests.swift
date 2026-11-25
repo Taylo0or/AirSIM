@@ -363,7 +363,8 @@ final class SMSNavigationUITests: XCTestCase {
         keep(app, "dialpad-accessibility-text-actions")
         delete.tap()
         let number = app.staticTexts["warm.dial.number"]
-        let cleared = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "输入号码"), object: number)
+        // The empty field shows nothing (like the system keypad) and reads "号码，未输入" to VoiceOver.
+        let cleared = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "号码，未输入"), object: number)
         XCTAssertEqual(XCTWaiter.wait(for: [cleared], timeout: 5), .completed)
     }
 
@@ -476,6 +477,97 @@ final class SMSNavigationUITests: XCTestCase {
         keep(app, "network-diagnostics")
         app.swipeUp()
         keep(app, "network-diagnostics-bottom")
+    }
+
+    /// Design review tour: every shell screen with a realistic roster (家中 K40 + two voip.ms lines).
+    /// Screenshots only; asserts just enough to know each screen was reached.
+    @MainActor func testShellScreenshotTour() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchFixture(["AIRSIM_UI_WARM": "1", "AIRSIM_UI_LINES": "1"])
+        defer { app.terminate() }
+        XCTAssertTrue(app.shell("首页").waitForExistence(timeout: 10))
+        app.shell("首页").tap()
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "0426")).firstMatch.waitForExistence(timeout: 10))
+        keep(app, "tour-01-home")
+        app.swipeUp(); keep(app, "tour-02-home-bottom"); app.swipeDown()
+        app.shell("通话").tap()
+        app.shell("拨号").tap(); keep(app, "tour-03-dial")
+        app.shell("最近").tap()
+        let lin = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "林青")).firstMatch
+        XCTAssertTrue(lin.waitForExistence(timeout: 5))
+        keep(app, "tour-04-recents")
+        lin.tap()
+        XCTAssertTrue(app.navigationBars["通话详情"].waitForExistence(timeout: 5))
+        keep(app, "tour-05-call-detail")
+        app.navigationBars["通话详情"].buttons["关闭"].tap()
+        app.shell("联系人").tap(); keep(app, "tour-06-contacts")
+        app.shell("语音信箱").tap(); keep(app, "tour-07-voicemail")
+        app.shell("短信").tap()
+        XCTAssertTrue(app.buttons["新建短信"].waitForExistence(timeout: 5))
+        keep(app, "tour-08-messages")
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "中国移动，10086")).firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["10086"].waitForExistence(timeout: 5))
+        keep(app, "tour-09-thread")
+        app.navigationBars.buttons.firstMatch.tap()
+        app.shell("我的").tap()
+        XCTAssertTrue(app.staticTexts["连接与设备"].waitForExistence(timeout: 5))
+        keep(app, "tour-10-account")
+        app.shell("通话").tap()
+        app.shell("拨号").tap()
+        app.buttons["warm.dial.line"].tap()
+        XCTAssertTrue(app.navigationBars["拨号线路"].waitForExistence(timeout: 5))
+        keep(app, "tour-11-line-picker")
+        app.navigationBars["拨号线路"].buttons["关闭"].tap()
+        app.shell("联系人").tap()
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "周宁")).firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["联系人详情"].waitForExistence(timeout: 5))
+        keep(app, "tour-12-contact")
+    }
+
+    /// 短信 and 通话 each have 全部标为已读 (clears the tab badge / 语音信箱 count), and rows delete with a left swipe.
+    @MainActor func testMarkAllReadAndSwipeToDelete() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchFixture(["AIRSIM_UI_WARM": "1", "AIRSIM_UI_LINES": "1"])
+        defer { app.terminate() }
+        let more = app.buttons["更多操作"]
+
+        // 通话: from the keypad (Recents would clear missed calls by itself), mark everything read.
+        XCTAssertTrue(app.shell("通话").waitForExistence(timeout: 10))
+        app.shell("通话").tap()
+        app.shell("拨号").tap()
+        XCTAssertTrue(app.shell("通话，").exists, "a missed call badges the tab")
+        XCTAssertTrue(app.buttons["语音信箱，1"].exists)
+        more.tap()
+        app.buttons["全部标为已读"].tap()
+        XCTAssertTrue(app.buttons["语音信箱"].waitForExistence(timeout: 5), "unheard count cleared")
+        XCTAssertFalse(app.shell("通话，").exists, "tab badge cleared")
+
+        // Recents: swipe a call away.
+        app.shell("最近").tap()
+        let call = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "陈岚")).firstMatch
+        XCTAssertTrue(call.waitForExistence(timeout: 5))
+        call.swipeLeft()
+        keep(app, "swipe-call")
+        app.buttons["删除"].tap()
+        XCTAssertTrue(call.waitForNonExistence(timeout: 5))
+
+        // 短信: swipe offers 删除 (and 已读 while unread); then 全部标为已读 clears the tab badge.
+        app.shell("短信").tap()
+        let mobile = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "中国移动，10086")).firstMatch
+        XCTAssertTrue(mobile.waitForExistence(timeout: 5))
+        mobile.swipeLeft()
+        XCTAssertTrue(app.buttons["已读"].waitForExistence(timeout: 3))
+        keep(app, "swipe-conversation")
+        app.buttons["删除"].tap()
+        XCTAssertTrue(mobile.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.shell("短信，").exists)
+        more.tap()
+        app.buttons["全部标为已读"].tap()
+        XCTAssertTrue(app.buttons["短信"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.shell("短信，").exists, "tab badge cleared")
+        keep(app, "messages-all-read")
     }
 
     /// The shell's four tabs and the calls segments (首页 / 通话 / 短信 / 我的).
