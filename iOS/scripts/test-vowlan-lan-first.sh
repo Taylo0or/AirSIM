@@ -20,6 +20,9 @@ w=(root/'AirSIM/WiredHTTPTransport.swift').read_text()
 models+=section(w,'enum LocalWiFiSubnet {','/// 模块 HTTP 响应')
 p=(root/'Shared/WatchCallPayload.swift').read_text()
 models+=section(p,'enum RemoteDirectHost {','struct WatchLocalPCMEndpoint:')
+# CloudCatchUpPolicyTests follow the LAN-first tests: the rule is pure and closes CloudAgentRouting.swift.
+c=(root/'AirSIM/CloudAgentRouting.swift').read_text()
+models+=c[c.index('enum CloudCatchUpPolicy {'):]
 (out/'Models.swift').write_text('import Foundation\nimport Darwin\n'+models)
 t=(root/'AirSIMTests/AirSIMTests.swift').read_text()
 t=t[t.index('final class VoWLANLANFirstIntegrationTests:'):]
